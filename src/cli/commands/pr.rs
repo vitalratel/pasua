@@ -29,16 +29,7 @@ pub async fn run(args: PrArgs) -> Result<()> {
     let repo_label = github::remote_name(repo).unwrap_or_else(|_| repo.display().to_string());
     let diff_output = render::layer1(&result, &repo_label, base, head);
 
-    let ci_status = meta.status_check_rollup.as_deref().and_then(|checks| {
-        if checks.iter().any(|c| c.conclusion.as_deref() == Some("FAILURE")) {
-            Some("fail")
-        } else if checks.iter().all(|c| c.conclusion.as_deref() == Some("SUCCESS")) {
-            Some("pass")
-        } else {
-            None
-        }
-    });
-
+    let ci_status = meta.ci_status();
     let review_count = meta.reviews.as_deref().map(|r| r.len()).unwrap_or(0);
 
     let output = render::pr_envelope(

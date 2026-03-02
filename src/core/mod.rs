@@ -1,9 +1,10 @@
 // ABOUTME: Core library — analysis pipeline shared by CLI and MCP.
-// ABOUTME: Modules: github, skeletal, semantic, cache, diff, render.
+// ABOUTME: Modules: github, skeletal, semantic, cache, diff, hunk, render.
 
 pub mod cache;
 pub mod diff;
 pub mod github;
+pub mod hunk;
 pub mod pipeline;
 pub mod render;
 pub mod semantic;

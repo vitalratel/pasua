@@ -4,9 +4,8 @@
 use clap::Args;
 use anyhow::Result;
 use std::path::PathBuf;
-use std::process::Command;
 
-use crate::core::{pipeline, render};
+use crate::core::{github, pipeline, render};
 
 #[derive(Args, Debug)]
 pub struct LogArgs {
@@ -21,13 +20,12 @@ pub struct LogArgs {
 
 pub async fn run(args: LogArgs) -> Result<()> {
     let repo = &args.repo;
-    let commits = list_commits(repo, &args.range)?;
+    let commits = github::list_commits(repo, &args.range)?;
 
     for (sha, subject) in &commits {
         let parent = format!("{sha}^");
         let result = pipeline::run(repo, &parent, sha, args.threshold, false).await?;
 
-        // Mini header: sha "subject"  +add/-del  Nf
         println!(
             "{} \"{}\"  +{}/−{}  {}f",
             &sha[..7],
@@ -37,7 +35,6 @@ pub async fn run(args: LogArgs) -> Result<()> {
             result.summary.file_count,
         );
 
-        // Render file lines only (no header line)
         for file in &result.files {
             let line = render::file_line_only(file);
             println!("  {line}");
@@ -46,27 +43,4 @@ pub async fn run(args: LogArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Return list of (sha, subject) for commits in the given range, oldest first.
-fn list_commits(repo: &PathBuf, range: &str) -> Result<Vec<(String, String)>> {
-    let output = Command::new("git")
-        .args(["log", "--reverse", "--format=%H %s", range])
-        .current_dir(repo)
-        .output()?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "git log failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let mut commits = Vec::new();
-    for line in String::from_utf8(output.stdout)?.lines() {
-        if let Some((sha, subject)) = line.split_once(' ') {
-            commits.push((sha.to_string(), subject.to_string()));
-        }
-    }
-    Ok(commits)
 }

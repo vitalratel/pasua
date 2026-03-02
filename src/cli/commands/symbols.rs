@@ -3,10 +3,9 @@
 
 use clap::Args;
 use anyhow::Result;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::core::{github, skeletal, diff as sym_diff, render};
+use crate::core::{pipeline, render};
 
 #[derive(Args, Debug)]
 pub struct SymbolsArgs {
@@ -21,18 +20,7 @@ pub struct SymbolsArgs {
 }
 
 pub async fn run(args: SymbolsArgs) -> Result<()> {
-    let repo = &args.repo;
-
-    let base_bytes = github::file_at(repo, &args.base, &args.file)?.unwrap_or_default();
-    let head_bytes = github::file_at(repo, &args.head, &args.file)?.unwrap_or_default();
-
-    let base_syms = skeletal::extract(&args.file, &base_bytes)?;
-    let head_syms = skeletal::extract(&args.file, &head_bytes)?;
-
-    let base_map = HashMap::from([(args.file.clone(), base_syms)]);
-    let head_map = HashMap::from([(args.file.clone(), head_syms)]);
-
-    let diffed = sym_diff::diff_symbols(&base_map, &head_map);
+    let diffed = pipeline::compute_symbols(&args.repo, &args.base, &args.head, &args.file)?;
     let output = render::layer2(&args.file, &diffed);
     print!("{output}");
     Ok(())

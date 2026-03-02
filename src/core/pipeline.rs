@@ -94,7 +94,7 @@ pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize, depth_sy
             let syms = if let Some(cached) = cache.get(repo, base, head, &fd.path) {
                 cached
             } else {
-                let syms = compute_symbols(repo, base, head, &fd.path, &fd.status)?;
+                let syms = compute_symbols(repo, base, head, &fd.path)?;
                 let _ = cache.put(repo, base, head, &fd.path, &syms);
                 syms
             };
@@ -352,12 +352,11 @@ fn detect_splits(
 }
 
 /// Compute Layer 2 symbols for a file.
-fn compute_symbols(
+pub fn compute_symbols(
     repo: &Path,
     base: &str,
     head: &str,
     path: &str,
-    status: &FileStatus,
 ) -> Result<Vec<crate::core::diff::DiffedSymbol>> {
     let base_bytes = github::file_at(repo, base, path)?.unwrap_or_default();
     let head_bytes = github::file_at(repo, head, path)?.unwrap_or_default();

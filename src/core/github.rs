@@ -53,6 +53,21 @@ pub struct FileStat {
     pub removed: usize,
 }
 
+impl PrMeta {
+    /// Derive CI pass/fail from status check rollup. Returns None if mixed or absent.
+    pub fn ci_status(&self) -> Option<&'static str> {
+        self.status_check_rollup.as_deref().and_then(|checks| {
+            if checks.iter().any(|c| c.conclusion.as_deref() == Some("FAILURE")) {
+                Some("fail")
+            } else if checks.iter().all(|c| c.conclusion.as_deref() == Some("SUCCESS")) {
+                Some("pass")
+            } else {
+                None
+            }
+        })
+    }
+}
+
 /// Fetch PR metadata from GitHub.
 pub fn pr_meta(repo: &Path, number: u64) -> Result<PrMeta> {
     let output = Command::new("gh")
@@ -303,6 +318,26 @@ pub fn remote_name(repo: &Path) -> Result<String> {
     };
 
     Ok(name)
+}
+
+/// List commits in a range, oldest first. Returns (sha, subject) pairs.
+pub fn list_commits(repo: &Path, range: &str) -> Result<Vec<(String, String)>> {
+    let output = Command::new("git")
+        .args(["log", "--reverse", "--format=%H %s", range])
+        .current_dir(repo)
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!("git log failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    let mut commits = Vec::new();
+    for line in String::from_utf8(output.stdout)?.lines() {
+        if let Some((sha, subject)) = line.split_once(' ') {
+            commits.push((sha.to_string(), subject.to_string()));
+        }
+    }
+    Ok(commits)
 }
 
 #[cfg(test)]
