@@ -1,0 +1,11 @@
+# Rust
+/target/
+Cargo.lock
+
+# Claude
+.claude/
+.mcp.json
+
+# Docs / local config
+*.md
+!README.md
