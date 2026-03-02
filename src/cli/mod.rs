@@ -1,7 +1,7 @@
 // ABOUTME: CLI module — command definitions and dispatch.
 // ABOUTME: All commands share the same core library functions.
 
-mod commands;
+pub mod commands;
 
 pub use commands::{Cli, Commands};
 

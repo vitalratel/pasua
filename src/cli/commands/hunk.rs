@@ -66,7 +66,7 @@ pub async fn run(args: HunkArgs) -> Result<()> {
 }
 
 /// Produce a minimal unified-style hunk comparing two line slices.
-fn make_hunk(base: &[&str], head: &[&str]) -> String {
+pub fn make_hunk(base: &[&str], head: &[&str]) -> String {
     let mut out = String::new();
     // Simple line-by-line diff: removed lines prefixed -, added prefixed +, common prefixed space
     let max = base.len().max(head.len());

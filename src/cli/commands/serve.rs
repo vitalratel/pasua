@@ -2,7 +2,11 @@
 // ABOUTME: Exposes the same operations as the CLI via MCP protocol.
 
 use clap::Args;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use rmcp::ServiceExt;
+use tracing_subscriber::EnvFilter;
+
+use crate::mcp::PasuaServer;
 
 #[derive(Args, Debug)]
 pub struct ServeArgs {
@@ -11,6 +15,32 @@ pub struct ServeArgs {
     pub log_level: String,
 }
 
-pub async fn run(_args: ServeArgs) -> Result<()> {
-    todo!("serve command")
+pub async fn run(args: ServeArgs) -> Result<()> {
+    init_tracing(&args.log_level);
+
+    tracing::info!("starting pasua MCP server on stdio");
+
+    let transport = rmcp::transport::stdio();
+    let server = PasuaServer::new();
+    let running = server
+        .serve(transport)
+        .await
+        .context("Failed to start MCP server")?;
+
+    tracing::info!("MCP server running");
+    running.waiting().await?;
+
+    Ok(())
+}
+
+fn init_tracing(level: &str) {
+    let filter = match std::env::var("RUST_LOG") {
+        Ok(val) if !val.is_empty() => EnvFilter::new(val),
+        _ => EnvFilter::new(format!("pasua={level}")),
+    };
+
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .init();
 }
