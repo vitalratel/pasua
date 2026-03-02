@@ -43,20 +43,21 @@ pub fn symbol_hunk(repo: &Path, base: &str, head: &str, file: &str, symbol: &str
     Ok(render::layer3(file, file, symbol, kind, &hunk))
 }
 
-/// Produce a minimal unified-style hunk comparing two line slices.
-pub fn make_hunk(base: &[&str], head: &[&str]) -> String {
+fn make_hunk(base: &[&str], head: &[&str]) -> String {
+    let base_text = base.join("\n");
+    let head_text = head.join("\n");
+    let diff = similar::TextDiff::from_lines(&base_text, &head_text);
     let mut out = String::new();
-    let max = base.len().max(head.len());
-    for i in 0..max {
-        match (base.get(i), head.get(i)) {
-            (Some(b), Some(h)) if b == h => out.push_str(&format!(" {b}\n")),
-            (Some(b), Some(h)) => {
-                out.push_str(&format!("-{b}\n"));
-                out.push_str(&format!("+{h}\n"));
-            }
-            (Some(b), None) => out.push_str(&format!("-{b}\n")),
-            (None, Some(h)) => out.push_str(&format!("+{h}\n")),
-            (None, None) => {}
+    for change in diff.iter_all_changes() {
+        let prefix = match change.tag() {
+            similar::ChangeTag::Delete => "-",
+            similar::ChangeTag::Insert => "+",
+            similar::ChangeTag::Equal => " ",
+        };
+        out.push_str(prefix);
+        out.push_str(change.value());
+        if !change.value().ends_with('\n') {
+            out.push('\n');
         }
     }
     out
