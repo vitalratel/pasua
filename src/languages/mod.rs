@@ -5,6 +5,7 @@ pub mod go;
 pub mod registry;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::Path;
 
 /// Language-agnostic symbol kinds.
@@ -47,6 +48,10 @@ pub trait LanguageSupport: Send + Sync {
     fn symbol_query(&self) -> &str;
     /// LSP server command, e.g. ["gopls"]
     fn lsp_command(&self) -> &[&str];
+    /// LSP initializationOptions (passed in initialize request)
+    fn lsp_init_options(&self) -> Value {
+        serde_json::json!({})
+    }
     /// Map tree-sitter node kind string to SymbolKind.
     fn symbol_kind(&self, node_kind: &str) -> Option<SymbolKind>;
     /// Check that required tooling is present (e.g. go.mod exists).

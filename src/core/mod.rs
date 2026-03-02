@@ -4,6 +4,7 @@
 pub mod cache;
 pub mod diff;
 pub mod github;
+pub mod pipeline;
 pub mod render;
 pub mod semantic;
 pub mod skeletal;

@@ -16,11 +16,14 @@ impl LanguageSupport for Go {
     }
 
     fn symbol_query(&self) -> &str {
-        // Captures @name for the identifier and outer node for body hashing.
+        // Captures @name for the identifier; outer node used for body hashing.
         r#"
 (function_declaration name: (identifier) @name) @fn
 (method_declaration name: (field_identifier) @name) @fn
 (type_declaration (type_spec name: (type_identifier) @name)) @ty
+(interface_type) @if
+(const_declaration) @co
+(var_declaration) @co
 "#
     }
 
@@ -34,6 +37,7 @@ impl LanguageSupport for Go {
             "type_declaration" => Some(SymbolKind::Ty),
             "interface_type" => Some(SymbolKind::If),
             "const_declaration" | "var_declaration" => Some(SymbolKind::Co),
+            "package_clause" => Some(SymbolKind::Mo),
             _ => None,
         }
     }

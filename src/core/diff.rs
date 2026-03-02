@@ -1,7 +1,7 @@
 // ABOUTME: Symbol diff computation — compares symbol sets between two refs.
 // ABOUTME: Produces per-symbol status: added, removed, modified, moved, renamed.
 
-use crate::languages::Symbol;
+use crate::languages::{Symbol, SymbolKind};
 use std::collections::HashMap;
 
 /// The computed status of a symbol across two refs.
@@ -31,6 +31,7 @@ pub enum SymbolStatus {
 #[derive(Debug, Clone)]
 pub struct DiffedSymbol {
     pub name: String,
+    pub kind: SymbolKind,
     pub file: String,
     pub status: SymbolStatus,
     /// LSP confirmed (true) or heuristic only (false)
@@ -70,6 +71,7 @@ pub fn diff_symbols(
                 };
                 result.push(DiffedSymbol {
                     name: sym.name.clone(),
+                    kind: sym.kind,
                     file: file.clone(),
                     status,
                     confirmed: false,
@@ -91,6 +93,7 @@ pub fn diff_symbols(
                     };
                     result.push(DiffedSymbol {
                         name: sym.name.clone(),
+                        kind: sym.kind,
                         file: file.clone(),
                         status,
                         confirmed: false,
@@ -98,6 +101,7 @@ pub fn diff_symbols(
                 } else {
                     result.push(DiffedSymbol {
                         name: sym.name.clone(),
+                        kind: sym.kind,
                         file: file.clone(),
                         status: SymbolStatus::Removed,
                         confirmed: false,
@@ -122,6 +126,7 @@ pub fn diff_symbols(
                 if !came_from_move {
                     result.push(DiffedSymbol {
                         name: sym.name.clone(),
+                        kind: sym.kind,
                         file: file.clone(),
                         status: SymbolStatus::Added,
                         confirmed: false,
