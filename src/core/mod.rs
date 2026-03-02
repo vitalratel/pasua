@@ -8,3 +8,4 @@ pub mod pipeline;
 pub mod render;
 pub mod semantic;
 pub mod skeletal;
+pub mod worktree;

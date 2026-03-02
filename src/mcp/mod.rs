@@ -101,7 +101,7 @@ impl PasuaServer {
             "diff" => {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
-                let result = pipeline::run(&repo, base, head, threshold).map_err(|e| e.to_string())?;
+                let result = pipeline::run(&repo, base, head, threshold).await.map_err(|e| e.to_string())?;
                 let repo_label = github::remote_name(&repo).unwrap_or_else(|_| params.repo.clone());
                 Ok(render::layer1(&result, &repo_label, base, head))
             }
@@ -147,7 +147,7 @@ impl PasuaServer {
                 let meta = github::pr_meta(&repo, pr_number).map_err(|e| e.to_string())?;
                 let base = &meta.base_ref_name;
                 let head = &meta.head_ref_name;
-                let result = pipeline::run(&repo, base, head, threshold).map_err(|e| e.to_string())?;
+                let result = pipeline::run(&repo, base, head, threshold).await.map_err(|e| e.to_string())?;
                 let repo_label = github::remote_name(&repo).unwrap_or_else(|_| params.repo.clone());
                 let diff_output = render::layer1(&result, &repo_label, base, head);
                 let ci = meta.status_check_rollup.as_deref().and_then(|checks| {
@@ -172,7 +172,7 @@ impl PasuaServer {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if let Some((sha, subject)) = line.split_once(' ') {
                         let parent = format!("{sha}^");
-                        let result = pipeline::run(&repo, &parent, sha, threshold).map_err(|e| e.to_string())?;
+                        let result = pipeline::run(&repo, &parent, sha, threshold).await.map_err(|e| e.to_string())?;
                         out.push_str(&format!("{} \"{}\"  +{}/−{}  {}f\n",
                             &sha[..7], subject,
                             result.summary.total_added, result.summary.total_removed, result.summary.file_count));

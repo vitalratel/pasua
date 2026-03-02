@@ -25,7 +25,7 @@ pub async fn run(args: LogArgs) -> Result<()> {
 
     for (sha, subject) in &commits {
         let parent = format!("{sha}^");
-        let result = pipeline::run(repo, &parent, sha, args.threshold)?;
+        let result = pipeline::run(repo, &parent, sha, args.threshold).await?;
 
         // Mini header: sha "subject"  +add/-del  Nf
         println!(

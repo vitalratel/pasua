@@ -25,7 +25,7 @@ pub struct DiffArgs {
 
 pub async fn run(args: DiffArgs) -> Result<()> {
     let repo = &args.repo;
-    let result = pipeline::run(repo, &args.base, &args.head, args.threshold)?;
+    let result = pipeline::run(repo, &args.base, &args.head, args.threshold).await?;
     let repo_label = github::remote_name(repo).unwrap_or_else(|_| repo.display().to_string());
     let output = render::layer1(&result, &repo_label, &args.base, &args.head);
     print!("{output}");
