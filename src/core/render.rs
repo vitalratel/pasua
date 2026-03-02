@@ -36,6 +36,11 @@ pub fn layer1(result: &DiffResult, repo_label: &str, base: &str, head: &str) -> 
     out
 }
 
+/// Public version for the log command.
+pub fn file_line_only(file: &FileDiff) -> String {
+    render_file_line(file)
+}
+
 fn render_file_line(file: &FileDiff) -> String {
     let (sigil, path_display, annotation) = match &file.status {
         FileStatus::Modified => ("M", file.path.clone(), String::new()),
