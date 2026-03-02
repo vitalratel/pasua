@@ -13,7 +13,7 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::core::{github, hunk, pipeline, render};
+use crate::core::{git, github, hunk, pipeline, render};
 
 /// MCP server for pasua operations.
 #[derive(Clone)]
@@ -150,7 +150,7 @@ impl PasuaServer {
             }
             "log" => {
                 let range = require(&params.range, "range")?;
-                let commits = github::list_commits(&repo, range).map_err(|e| e.to_string())?;
+                let commits = git::list_commits(&repo, range).map_err(|e| e.to_string())?;
                 let mut out = String::new();
                 for (sha, subject) in &commits {
                     let parent = format!("{sha}^");

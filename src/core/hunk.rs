@@ -4,7 +4,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::core::{cache::Cache, diff::DiffedSymbol, github, render, skeletal};
+use crate::core::{cache::Cache, diff::DiffedSymbol, git, render, skeletal};
 
 /// Produce a Layer 3 hunk diff for a single symbol.
 pub fn symbol_hunk(
@@ -14,8 +14,8 @@ pub fn symbol_hunk(
     file: &str,
     symbol: &str,
 ) -> Result<String> {
-    let base_bytes = github::file_at(repo, base, file)?.unwrap_or_default();
-    let head_bytes = github::file_at(repo, head, file)?.unwrap_or_default();
+    let base_bytes = git::file_at(repo, base, file)?.unwrap_or_default();
+    let head_bytes = git::file_at(repo, head, file)?.unwrap_or_default();
 
     let base_syms = skeletal::extract(file, &base_bytes)?;
     let head_syms = skeletal::extract(file, &head_bytes)?;
@@ -67,8 +67,8 @@ fn cached_lsp_range(
     file: &str,
     symbol: &str,
 ) -> Option<(usize, usize)> {
-    let base_sha = github::resolve_ref(repo, base).ok()?;
-    let head_sha = github::resolve_ref(repo, head).ok()?;
+    let base_sha = git::resolve_ref(repo, base).ok()?;
+    let head_sha = git::resolve_ref(repo, head).ok()?;
     let cache = Cache::new(Cache::default_path());
     let syms: Vec<DiffedSymbol> = cache.get(repo, &base_sha, &head_sha, file)?;
     syms.iter().find(|s| s.name == symbol)?.lsp_range

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use tokio::time::Duration;
 
 use crate::core::cache::Cache;
-use crate::core::github::{self, FileStat, GitStatus};
+use crate::core::git::{self, FileStat, GitStatus};
 use crate::core::skeletal;
 use crate::core::{semantic, worktree};
 use crate::languages::{Symbol, registry};
@@ -80,10 +80,10 @@ pub async fn run(
     depth_symbols: bool,
 ) -> Result<DiffResult> {
     // Resolve symbolic refs to SHAs so cache keys are stable across commits.
-    let base_sha = github::resolve_ref(repo, base)?;
-    let head_sha = github::resolve_ref(repo, head)?;
+    let base_sha = git::resolve_ref(repo, base)?;
+    let head_sha = git::resolve_ref(repo, head)?;
 
-    let stats = github::diff_stats(repo, base, head)?;
+    let stats = git::diff_stats(repo, base, head)?;
     let mut cache = Cache::new(Cache::default_path());
 
     // Separate into categories for split detection
@@ -292,7 +292,7 @@ fn extract_cached(
     if let Some(cached) = cache.get::<Vec<Symbol>>(repo, git_ref, git_ref, path) {
         return Some(cached);
     }
-    let bytes = github::file_at(repo, git_ref, path).ok()??;
+    let bytes = git::file_at(repo, git_ref, path).ok()??;
     let syms = skeletal::extract(path, &bytes).ok()?;
     if !syms.is_empty() {
         let _ = cache.put(repo, git_ref, git_ref, path, &syms);
@@ -396,8 +396,8 @@ pub fn compute_symbols(
     head: &str,
     path: &str,
 ) -> Result<Vec<crate::core::diff::DiffedSymbol>> {
-    let base_bytes = github::file_at(repo, base, path)?.unwrap_or_default();
-    let head_bytes = github::file_at(repo, head, path)?.unwrap_or_default();
+    let base_bytes = git::file_at(repo, base, path)?.unwrap_or_default();
+    let head_bytes = git::file_at(repo, head, path)?.unwrap_or_default();
 
     let base_syms = skeletal::extract(path, &base_bytes)?;
     let head_syms = skeletal::extract(path, &head_bytes)?;

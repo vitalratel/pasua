@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::core::{github, pipeline, render};
+use crate::core::{git, pipeline, render};
 
 #[derive(Args, Debug)]
 pub struct LogArgs {
@@ -20,7 +20,7 @@ pub struct LogArgs {
 
 pub async fn run(args: LogArgs) -> Result<()> {
     let repo = &args.repo;
-    let commits = github::list_commits(repo, &args.range)?;
+    let commits = git::list_commits(repo, &args.range)?;
 
     for (sha, subject) in &commits {
         let parent = format!("{sha}^");
