@@ -7,11 +7,6 @@ use lsp_types::{
     DocumentSymbolParams, InitializeParams, InitializeResult, Location, Range,
     TextDocumentClientCapabilities, TextDocumentIdentifier, TextDocumentItem, Uri,
 };
-
-fn path_to_uri(path: &Path) -> Result<Uri> {
-    let s = format!("file://{}", path.display());
-    s.parse::<Uri>().map_err(|e| anyhow::anyhow!("Invalid URI for {}: {e}", path.display()))
-}
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -19,6 +14,11 @@ use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::{timeout, Duration};
+
+fn path_to_uri(path: &Path) -> Result<Uri> {
+    let s = format!("file://{}", path.display());
+    s.parse::<Uri>().map_err(|e| anyhow::anyhow!("Invalid URI for {}: {e}", path.display()))
+}
 
 /// A symbol found by the LSP server in a document.
 #[derive(Debug, Clone)]

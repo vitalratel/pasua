@@ -19,21 +19,17 @@ pub fn symbol_hunk(repo: &Path, base: &str, head: &str, file: &str, symbol: &str
 
     let (kind, hunk) = match (base_sym, head_sym) {
         (Some(b), Some(h)) => {
-            let base_lines: Vec<&str> = std::str::from_utf8(&base_bytes)?.lines().collect();
-            let head_lines: Vec<&str> = std::str::from_utf8(&head_bytes)?.lines().collect();
-            let bs = &base_lines[b.start_line.saturating_sub(1)..b.end_line.min(base_lines.len())];
-            let hs = &head_lines[h.start_line.saturating_sub(1)..h.end_line.min(head_lines.len())];
-            (b.kind, make_hunk(bs, hs))
+            let bs = symbol_lines(&base_bytes, b.start_line, b.end_line)?;
+            let hs = symbol_lines(&head_bytes, h.start_line, h.end_line)?;
+            (b.kind, make_hunk(&bs, &hs))
         }
         (Some(b), None) => {
-            let base_lines: Vec<&str> = std::str::from_utf8(&base_bytes)?.lines().collect();
-            let bs = &base_lines[b.start_line.saturating_sub(1)..b.end_line.min(base_lines.len())];
+            let bs = symbol_lines(&base_bytes, b.start_line, b.end_line)?;
             let hunk = bs.iter().map(|l| format!("-{l}")).collect::<Vec<_>>().join("\n");
             (b.kind, hunk)
         }
         (None, Some(h)) => {
-            let head_lines: Vec<&str> = std::str::from_utf8(&head_bytes)?.lines().collect();
-            let hs = &head_lines[h.start_line.saturating_sub(1)..h.end_line.min(head_lines.len())];
+            let hs = symbol_lines(&head_bytes, h.start_line, h.end_line)?;
             let hunk = hs.iter().map(|l| format!("+{l}")).collect::<Vec<_>>().join("\n");
             (h.kind, hunk)
         }
@@ -43,7 +39,13 @@ pub fn symbol_hunk(repo: &Path, base: &str, head: &str, file: &str, symbol: &str
     Ok(render::layer3(file, file, symbol, kind, &hunk))
 }
 
-fn make_hunk(base: &[&str], head: &[&str]) -> String {
+fn symbol_lines(bytes: &[u8], start: usize, end: usize) -> Result<Vec<String>> {
+    let lines: Vec<String> = std::str::from_utf8(bytes)?.lines().map(|l| l.to_owned()).collect();
+    let slice = &lines[start.saturating_sub(1)..end.min(lines.len())];
+    Ok(slice.to_vec())
+}
+
+fn make_hunk(base: &[String], head: &[String]) -> String {
     let base_text = base.join("\n");
     let head_text = head.join("\n");
     let diff = similar::TextDiff::from_lines(&base_text, &head_text);

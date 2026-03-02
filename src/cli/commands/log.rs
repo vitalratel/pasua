@@ -26,14 +26,7 @@ pub async fn run(args: LogArgs) -> Result<()> {
         let parent = format!("{sha}^");
         let result = pipeline::run(repo, &parent, sha, args.threshold, false).await?;
 
-        println!(
-            "{} \"{}\"  +{}/−{}  {}f",
-            &sha[..7],
-            subject,
-            result.summary.total_added,
-            result.summary.total_removed,
-            result.summary.file_count,
-        );
+        println!("{}", render::log_entry(sha, subject, &result));
 
         for file in &result.files {
             let line = render::file_line_only(file);

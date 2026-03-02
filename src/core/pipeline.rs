@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::time::Duration;
 
 use crate::core::cache::Cache;
@@ -59,6 +59,7 @@ pub struct DiffSummary {
 }
 
 /// Result of a full diff analysis.
+#[derive(Debug)]
 pub struct DiffResult {
     pub summary: DiffSummary,
     pub files: Vec<FileDiff>,
@@ -215,7 +216,6 @@ async fn confirm_with_lsp(
     Ok(())
 }
 
-use anyhow::Context;
 
 fn classify(stats: &[FileStat]) -> Vec<FileDiff> {
     stats
@@ -367,6 +367,5 @@ pub fn compute_symbols(
     let base_map = HashMap::from([(path.to_string(), base_syms)]);
     let head_map = HashMap::from([(path.to_string(), head_syms)]);
 
-    let diffed = crate::core::diff::diff_symbols(&base_map, &head_map);
-    Ok(diffed)
+    Ok(crate::core::diff::diff_symbols(&base_map, &head_map))
 }

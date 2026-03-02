@@ -137,9 +137,7 @@ impl PasuaServer {
                 for (sha, subject) in &commits {
                     let parent = format!("{sha}^");
                     let result = pipeline::run(&repo, &parent, sha, threshold, false).await.map_err(|e| e.to_string())?;
-                    out.push_str(&format!("{} \"{}\"  +{}/−{}  {}f\n",
-                        &sha[..7], subject,
-                        result.summary.total_added, result.summary.total_removed, result.summary.file_count));
+                    out.push_str(&format!("{}\n", render::log_entry(sha, subject, &result)));
                     for file in &result.files {
                         out.push_str(&format!("  {}\n", render::file_line_only(file)));
                     }

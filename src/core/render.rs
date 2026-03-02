@@ -41,6 +41,18 @@ pub fn file_line_only(file: &FileDiff) -> String {
     render_file_line(file)
 }
 
+/// One-line commit summary for the log command.
+pub fn log_entry(sha: &str, subject: &str, result: &DiffResult) -> String {
+    format!(
+        "{} \"{}\"  +{}/−{}  {}f",
+        &sha[..7],
+        subject,
+        result.summary.total_added,
+        result.summary.total_removed,
+        result.summary.file_count,
+    )
+}
+
 fn render_file_line(file: &FileDiff) -> String {
     let (sigil, path_display, annotation) = match &file.status {
         FileStatus::Modified => ("M", file.path.clone(), String::new()),
