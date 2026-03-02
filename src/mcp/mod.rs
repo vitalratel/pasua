@@ -164,6 +164,7 @@ impl PasuaServer {
                     .args(["log", "--reverse", "--format=%H %s", range])
                     .current_dir(&repo)
                     .output()
+                    .await
                     .map_err(|e| e.to_string())?;
                 if !output.status.success() {
                     return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -193,4 +194,4 @@ fn require<'a>(opt: &'a Option<String>, name: &str) -> Result<&'a str, String> {
     opt.as_deref().ok_or_else(|| format!("'{name}' is required for this action"))
 }
 
-use std::process::Command;
+use tokio::process::Command;
