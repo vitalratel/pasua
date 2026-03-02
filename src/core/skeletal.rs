@@ -3,8 +3,6 @@
 
 use crate::languages::{registry, Symbol};
 use anyhow::Result;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use tree_sitter::StreamingIterator;
 
 /// Extract symbols from source bytes using tree-sitter.
@@ -40,7 +38,7 @@ pub fn extract(path: &str, source: &[u8]) -> Result<Vec<Symbol>> {
         if let (Some(outer), Some(name_cap)) = (outer, name_cap) {
             let name = name_cap.node.utf8_text(source)?.to_string();
             let body: &str = outer.utf8_text(source).unwrap_or("");
-            let body_hash = hash_str(body);
+            let body_hash = twox_hash::XxHash64::oneshot(0, body.as_bytes());
             let kind = lang.symbol_kind(outer.kind()).unwrap_or(crate::languages::SymbolKind::Fn);
 
             symbols.push(Symbol {
@@ -54,12 +52,6 @@ pub fn extract(path: &str, source: &[u8]) -> Result<Vec<Symbol>> {
     }
 
     Ok(symbols)
-}
-
-fn hash_str(s: &str) -> u64 {
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    h.finish()
 }
 
 #[cfg(test)]

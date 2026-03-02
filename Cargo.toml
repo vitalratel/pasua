@@ -19,6 +19,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tree-sitter = "0.26.6"
 tree-sitter-go = "0.25.0"
+twox-hash = { version = "2.1.2", default-features = false, features = ["xxhash64"] }
 which = "8.0.0"
 
 [dev-dependencies]
