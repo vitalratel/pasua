@@ -42,6 +42,19 @@ pub struct DiffedSymbol {
     pub lsp_range: Option<(usize, usize)>,
 }
 
+impl DiffedSymbol {
+    fn new(name: String, kind: SymbolKind, file: String, status: SymbolStatus) -> Self {
+        Self {
+            name,
+            kind,
+            file,
+            status,
+            confirmed: false,
+            lsp_range: None,
+        }
+    }
+}
+
 /// Compute symbol-level diff between base and head symbol sets.
 ///
 /// `base_symbols` and `head_symbols` are maps from file path to symbol list.
@@ -79,14 +92,12 @@ pub fn diff_symbols(
                 } else {
                     SymbolStatus::Modified
                 };
-                result.push(DiffedSymbol {
-                    name: sym.name.clone(),
-                    kind: sym.kind,
-                    file: file.clone(),
+                result.push(DiffedSymbol::new(
+                    sym.name.clone(),
+                    sym.kind,
+                    file.clone(),
                     status,
-                    confirmed: false,
-                    lsp_range: None,
-                });
+                ));
             } else {
                 // Not found in head at same location — check if moved
                 let moved_to = head_symbols.iter().find_map(|(hfile, hsyms)| {
@@ -105,23 +116,19 @@ pub fn diff_symbols(
                     } else {
                         SymbolStatus::MovedModified { to_file }
                     };
-                    result.push(DiffedSymbol {
-                        name: sym.name.clone(),
-                        kind: sym.kind,
-                        file: file.clone(),
+                    result.push(DiffedSymbol::new(
+                        sym.name.clone(),
+                        sym.kind,
+                        file.clone(),
                         status,
-                        confirmed: false,
-                    lsp_range: None,
-                    });
+                    ));
                 } else {
-                    result.push(DiffedSymbol {
-                        name: sym.name.clone(),
-                        kind: sym.kind,
-                        file: file.clone(),
-                        status: SymbolStatus::Removed,
-                        confirmed: false,
-                    lsp_range: None,
-                    });
+                    result.push(DiffedSymbol::new(
+                        sym.name.clone(),
+                        sym.kind,
+                        file.clone(),
+                        SymbolStatus::Removed,
+                    ));
                 }
             }
         }
@@ -140,14 +147,12 @@ pub fn diff_symbols(
                     )
                 });
                 if !came_from_move {
-                    result.push(DiffedSymbol {
-                        name: sym.name.clone(),
-                        kind: sym.kind,
-                        file: file.clone(),
-                        status: SymbolStatus::Added,
-                        confirmed: false,
-                    lsp_range: None,
-                    });
+                    result.push(DiffedSymbol::new(
+                        sym.name.clone(),
+                        sym.kind,
+                        file.clone(),
+                        SymbolStatus::Added,
+                    ));
                 }
             }
         }

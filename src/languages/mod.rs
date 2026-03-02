@@ -54,6 +54,8 @@ pub trait LanguageSupport: Send + Sync {
     }
     /// Map tree-sitter node kind string to SymbolKind.
     fn symbol_kind(&self, node_kind: &str) -> Option<SymbolKind>;
+    /// LSP language identifier string, e.g. "go", "rust".
+    fn lsp_language_id(&self) -> &'static str;
     /// Check that required tooling is present (e.g. go.mod exists).
     fn check_readiness(&self, path: &Path) -> Result<(), String>;
 }

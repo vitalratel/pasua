@@ -1,5 +1,5 @@
 // ABOUTME: Go language support — tree-sitter grammar and gopls integration.
-// ABOUTME: Initial language implementation; verified against real Go projects.
+// ABOUTME: Extracts functions, types, interfaces, and constants via tree-sitter queries.
 
 use super::{LanguageSupport, SymbolKind};
 use std::path::Path;
@@ -29,6 +29,10 @@ impl LanguageSupport for Go {
 
     fn lsp_command(&self) -> &[&str] {
         &["gopls"]
+    }
+
+    fn lsp_language_id(&self) -> &'static str {
+        "go"
     }
 
     fn symbol_kind(&self, node_kind: &str) -> Option<SymbolKind> {

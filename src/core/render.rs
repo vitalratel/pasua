@@ -54,6 +54,14 @@ pub fn log_entry(sha: &str, subject: &str, result: &DiffResult) -> String {
     )
 }
 
+fn targets_annotation(targets: &[String]) -> String {
+    if targets.is_empty() {
+        String::new()
+    } else {
+        format!("  →[{}]", targets.join(" "))
+    }
+}
+
 fn render_file_line(file: &FileDiff) -> String {
     let (sigil, path_display, annotation) = match &file.status {
         FileStatus::Modified => ("M", file.path.clone(), String::new()),
@@ -64,18 +72,8 @@ fn render_file_line(file: &FileDiff) -> String {
             };
             ("A", file.path.clone(), ann)
         }
-        FileStatus::Deleted { targets } => {
-            let ann = if targets.is_empty() {
-                String::new()
-            } else {
-                format!("  →[{}]", targets.join(" "))
-            };
-            ("D", file.path.clone(), ann)
-        }
-        FileStatus::Split { targets } => {
-            let ann = format!("  →[{}]", targets.join(" "));
-            ("S", file.path.clone(), ann)
-        }
+        FileStatus::Deleted { targets } => ("D", file.path.clone(), targets_annotation(targets)),
+        FileStatus::Split { targets } => ("S", file.path.clone(), targets_annotation(targets)),
         FileStatus::Renamed { old_path, new_path } => {
             ("V", format!("{old_path}→{new_path}"), String::new())
         }

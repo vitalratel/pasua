@@ -4,7 +4,7 @@
 use anyhow::Result;
 use serde::Deserialize;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
 
 /// Metadata for a pull request.
 #[derive(Debug, Deserialize)]
@@ -68,16 +68,22 @@ impl PrMeta {
                     || (c.conclusion.is_none() && c.state.as_deref() != Some("SUCCESS"))
             }) {
                 Some("pending")
-            } else if checks
-                .iter()
-                .all(|c| c.conclusion.as_deref() == Some("SUCCESS") || c.state.as_deref() == Some("SUCCESS"))
-            {
+            } else if checks.iter().all(|c| {
+                c.conclusion.as_deref() == Some("SUCCESS") || c.state.as_deref() == Some("SUCCESS")
+            }) {
                 Some("pass")
             } else {
                 None
             }
         })
     }
+}
+
+fn require_success(output: &Output, cmd: &str) -> Result<()> {
+    if !output.status.success() {
+        anyhow::bail!("{cmd} failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(())
 }
 
 /// Fetch PR metadata from GitHub.
@@ -93,12 +99,7 @@ pub fn pr_meta(repo: &Path, number: u64) -> Result<PrMeta> {
         .current_dir(repo)
         .output()?;
 
-    if !output.status.success() {
-        anyhow::bail!(
-            "gh pr view failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    require_success(&output, "gh pr view")?;
 
     let meta = serde_json::from_slice(&output.stdout)?;
     Ok(meta)
@@ -117,12 +118,7 @@ pub fn diff_stats(repo: &Path, base: &str, head: &str) -> Result<Vec<FileStat>> 
         .current_dir(repo)
         .output()?;
 
-    if !status_out.status.success() {
-        anyhow::bail!(
-            "git diff --name-status failed: {}",
-            String::from_utf8_lossy(&status_out.stderr)
-        );
-    }
+    require_success(&status_out, "git diff --name-status")?;
 
     // --numstat for line counts
     let numstat_out = Command::new("git")
@@ -135,12 +131,7 @@ pub fn diff_stats(repo: &Path, base: &str, head: &str) -> Result<Vec<FileStat>> 
         .current_dir(repo)
         .output()?;
 
-    if !numstat_out.status.success() {
-        anyhow::bail!(
-            "git diff --numstat failed: {}",
-            String::from_utf8_lossy(&numstat_out.stderr)
-        );
-    }
+    require_success(&numstat_out, "git diff --numstat")?;
 
     let statuses = parse_name_status(&String::from_utf8(status_out.stdout)?);
     let counts = parse_numstat(&String::from_utf8(numstat_out.stdout)?);
@@ -272,12 +263,7 @@ pub fn resolve_ref(repo: &Path, git_ref: &str) -> Result<String> {
         .current_dir(repo)
         .output()?;
 
-    if !output.status.success() {
-        anyhow::bail!(
-            "git rev-parse failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    require_success(&output, "git rev-parse")?;
 
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
@@ -327,12 +313,7 @@ pub fn list_commits(repo: &Path, range: &str) -> Result<Vec<(String, String)>> {
         .current_dir(repo)
         .output()?;
 
-    if !output.status.success() {
-        anyhow::bail!(
-            "git log failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    require_success(&output, "git log")?;
 
     let mut commits = Vec::new();
     for line in String::from_utf8(output.stdout)?.lines() {

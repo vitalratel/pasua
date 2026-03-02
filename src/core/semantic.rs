@@ -123,19 +123,13 @@ impl LspClient {
     }
 
     /// Open a file in the language server.
-    pub async fn open_file(&mut self, path: &Path, content: &str) -> Result<()> {
+    pub async fn open_file(&mut self, path: &Path, content: &str, language_id: &str) -> Result<()> {
         let uri = path_to_uri(path)?;
-
-        let lang = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(lang_id)
-            .unwrap_or("plaintext");
 
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri,
-                language_id: lang.to_string(),
+                language_id: language_id.to_string(),
                 version: 1,
                 text: content.to_string(),
             },
@@ -363,16 +357,6 @@ struct SymbolInformationCompat {
     name: String,
     kind: lsp_types::SymbolKind,
     location: Location,
-}
-
-fn lang_id(ext: &str) -> &'static str {
-    match ext {
-        "go" => "go",
-        "rs" => "rust",
-        "ts" | "tsx" => "typescript",
-        "js" | "jsx" => "javascript",
-        _ => "plaintext",
-    }
 }
 
 /// Check if an LSP server command is available on PATH.

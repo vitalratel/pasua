@@ -1,7 +1,7 @@
 // ABOUTME: Main analysis pipeline — classifies files, extracts symbols, detects splits.
 // ABOUTME: Produces the FileDiff list consumed by the renderer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -172,10 +172,7 @@ async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) 
         return Ok(()); // No supported LSP available
     };
 
-    eprintln!(
-        "pasua: starting {} for LSP confirmation...",
-        lang.lsp_command()[0]
-    );
+    tracing::info!("starting {} for LSP confirmation...", lang.lsp_command()[0]);
 
     // Create a worktree at head for LSP to index
     let wt = worktree::Worktree::create(repo, head)?;
@@ -198,7 +195,7 @@ async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) 
     .await
     .with_context(|| format!("Failed to start {}", lang.lsp_command()[0]))?;
 
-    eprintln!("pasua: LSP server ready, confirming symbols...");
+    tracing::info!("LSP server ready, confirming symbols...");
 
     // For each file that has symbols or is part of a split, verify via LSP
     for fd in file_diffs.iter_mut() {
@@ -212,7 +209,10 @@ async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) 
             Err(_) => continue,
         };
 
-        if let Err(e) = client.open_file(&file_path, &content).await {
+        if let Err(e) = client
+            .open_file(&file_path, &content, lang.lsp_language_id())
+            .await
+        {
             tracing::debug!("LSP open_file failed for {}: {e}", fd.path);
             continue;
         }
@@ -245,7 +245,7 @@ async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) 
     }
 
     let _ = client.shutdown(LSP_TIMEOUT).await;
-    eprintln!("pasua: LSP confirmation complete");
+    tracing::info!("LSP confirmation complete");
 
     Ok(())
 }
@@ -352,13 +352,11 @@ fn detect_splits(
 
     // For each source, check symbol overlap with each target
     for (src_path, src_syms) in &source_symbols {
-        let src_names: std::collections::HashSet<&str> =
-            src_syms.iter().map(|s| s.name.as_str()).collect();
+        let src_names: HashSet<&str> = src_syms.iter().map(|s| s.name.as_str()).collect();
 
         let mut split_targets: Vec<String> = Vec::new();
         for (tgt_path, tgt_syms) in &target_symbols {
-            let tgt_names: std::collections::HashSet<&str> =
-                tgt_syms.iter().map(|s| s.name.as_str()).collect();
+            let tgt_names: HashSet<&str> = tgt_syms.iter().map(|s| s.name.as_str()).collect();
             let overlap = src_names.intersection(&tgt_names).count();
             // Threshold: at least 2 shared symbols, or >30% of source symbols present
             let significant = overlap >= 2 || (overlap > 0 && overlap * 100 / src_names.len() > 30);
