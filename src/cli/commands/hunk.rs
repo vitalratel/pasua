@@ -1,8 +1,8 @@
 // ABOUTME: `pasua hunk` command — Layer 3 scoped diff for a single symbol.
 // ABOUTME: Returns unified diff lines scoped to the symbol's line range only.
 
-use clap::Args;
 use anyhow::Result;
+use clap::Args;
 use std::path::PathBuf;
 
 use crate::core::hunk;

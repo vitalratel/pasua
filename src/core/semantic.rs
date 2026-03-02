@@ -6,18 +6,20 @@ use lsp_types::{
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
     DocumentSymbolParams, InitializeParams, InitializeResult, Location, Range,
     TextDocumentClientCapabilities, TextDocumentIdentifier, TextDocumentItem, Uri,
+    WorkspaceClientCapabilities, WorkspaceFolder,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 fn path_to_uri(path: &Path) -> Result<Uri> {
     let s = format!("file://{}", path.display());
-    s.parse::<Uri>().map_err(|e| anyhow::anyhow!("Invalid URI for {}: {e}", path.display()))
+    s.parse::<Uri>()
+        .map_err(|e| anyhow::anyhow!("Invalid URI for {}: {e}", path.display()))
 }
 
 /// A symbol found by the LSP server in a document.
@@ -40,7 +42,12 @@ pub struct LspClient {
 
 impl LspClient {
     /// Spawn a language server and perform the initialize handshake.
-    pub async fn spawn(command: &[&str], root: &Path, request_timeout: Duration) -> Result<Self> {
+    pub async fn spawn(
+        command: &[&str],
+        root: &Path,
+        init_options: serde_json::Value,
+        request_timeout: Duration,
+    ) -> Result<Self> {
         let (cmd, args) = command
             .split_first()
             .context("LSP command must not be empty")?;
@@ -65,16 +72,36 @@ impl LspClient {
             pending: HashMap::new(),
         };
 
-        client.initialize(root, request_timeout).await?;
+        client
+            .initialize(root, init_options, request_timeout)
+            .await?;
         Ok(client)
     }
 
-    async fn initialize(&mut self, root: &Path, request_timeout: Duration) -> Result<()> {
+    async fn initialize(
+        &mut self,
+        root: &Path,
+        init_options: serde_json::Value,
+        request_timeout: Duration,
+    ) -> Result<()> {
         let root_uri = path_to_uri(root)?;
+        let workspace_name = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace")
+            .to_string();
 
         let params = InitializeParams {
-            root_uri: Some(root_uri),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: root_uri,
+                name: workspace_name,
+            }]),
+            initialization_options: Some(init_options),
             capabilities: ClientCapabilities {
+                workspace: Some(WorkspaceClientCapabilities {
+                    workspace_folders: Some(true),
+                    ..Default::default()
+                }),
                 text_document: Some(TextDocumentClientCapabilities {
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
@@ -87,9 +114,7 @@ impl LspClient {
             ..Default::default()
         };
 
-        let _result: InitializeResult = self
-            .request("initialize", params, request_timeout)
-            .await?;
+        let _result: InitializeResult = self.request("initialize", params, request_timeout).await?;
 
         // Send initialized notification (no response expected)
         self.notify("initialized", json!({})).await?;
@@ -228,7 +253,7 @@ impl LspClient {
             let result = obj
                 .get("result")
                 .cloned()
-                .or_else(|| obj.get("error").map(|e| e.clone()))
+                .or_else(|| obj.get("error").cloned())
                 .unwrap_or(Value::Null);
 
             if msg_id_u64 == Some(id) {

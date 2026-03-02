@@ -4,7 +4,12 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use rmcp::{ServerHandler, handler::server::{router::tool::ToolRouter, wrapper::Parameters}, model::*, tool, tool_handler, tool_router};
+use rmcp::{
+    ServerHandler,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    model::*,
+    tool, tool_handler, tool_router,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -100,7 +105,9 @@ impl PasuaServer {
             "diff" => {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
-                let result = pipeline::run(&repo, base, head, threshold, false).await.map_err(|e| e.to_string())?;
+                let result = pipeline::run(&repo, base, head, threshold, false)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let repo_label = github::remote_name(&repo).unwrap_or_else(|_| params.repo.clone());
                 Ok(render::layer1(&result, &repo_label, base, head))
             }
@@ -108,7 +115,8 @@ impl PasuaServer {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
                 let file = require(&params.file, "file")?;
-                let diffed = pipeline::compute_symbols(&repo, base, head, file).map_err(|e| e.to_string())?;
+                let diffed = pipeline::compute_symbols(&repo, base, head, file)
+                    .map_err(|e| e.to_string())?;
                 Ok(render::layer2(file, &diffed))
             }
             "hunk" => {
@@ -123,12 +131,22 @@ impl PasuaServer {
                 let meta = github::pr_meta(&repo, pr_number).map_err(|e| e.to_string())?;
                 let base = &meta.base_ref_name;
                 let head = &meta.head_ref_name;
-                let result = pipeline::run(&repo, base, head, threshold, false).await.map_err(|e| e.to_string())?;
+                let result = pipeline::run(&repo, base, head, threshold, false)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let repo_label = github::remote_name(&repo).unwrap_or_else(|_| params.repo.clone());
                 let diff_output = render::layer1(&result, &repo_label, base, head);
                 let ci = meta.ci_status();
-                let reviews = meta.reviews.as_deref().map(|r| r.len()).unwrap_or(0);
-                Ok(render::pr_envelope(meta.number, &meta.title, &meta.body, ci, reviews, &diff_output))
+                let reviews = meta.reviews.as_deref().unwrap_or(&[]);
+                Ok(render::pr_envelope(
+                    meta.number,
+                    &meta.title,
+                    &meta.body,
+                    &meta.state,
+                    ci,
+                    reviews,
+                    &diff_output,
+                ))
             }
             "log" => {
                 let range = require(&params.range, "range")?;
@@ -136,7 +154,9 @@ impl PasuaServer {
                 let mut out = String::new();
                 for (sha, subject) in &commits {
                     let parent = format!("{sha}^");
-                    let result = pipeline::run(&repo, &parent, sha, threshold, false).await.map_err(|e| e.to_string())?;
+                    let result = pipeline::run(&repo, &parent, sha, threshold, false)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     out.push_str(&format!("{}\n", render::log_entry(sha, subject, &result)));
                     for file in &result.files {
                         out.push_str(&format!("  {}\n", render::file_line_only(file)));
@@ -145,12 +165,14 @@ impl PasuaServer {
                 }
                 Ok(out)
             }
-            other => Err(format!("Unknown action: '{other}'. Use: diff | symbols | hunk | pr | log")),
+            other => Err(format!(
+                "Unknown action: '{other}'. Use: diff | symbols | hunk | pr | log"
+            )),
         }
     }
 }
 
 fn require<'a>(opt: &'a Option<String>, name: &str) -> Result<&'a str, String> {
-    opt.as_deref().ok_or_else(|| format!("'{name}' is required for this action"))
+    opt.as_deref()
+        .ok_or_else(|| format!("'{name}' is required for this action"))
 }
-

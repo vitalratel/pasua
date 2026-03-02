@@ -37,6 +37,9 @@ pub struct DiffedSymbol {
     pub status: SymbolStatus,
     /// LSP confirmed (true) or heuristic only (false)
     pub confirmed: bool,
+    /// LSP-confirmed line range (1-indexed start, 1-indexed end), if available.
+    #[serde(default)]
+    pub lsp_range: Option<(usize, usize)>,
 }
 
 /// Compute symbol-level diff between base and head symbol sets.
@@ -51,13 +54,19 @@ pub fn diff_symbols(
     // Index base symbols by (file, name) → body_hash
     let base_index: HashMap<(&str, &str), &Symbol> = base_symbols
         .iter()
-        .flat_map(|(file, syms)| syms.iter().map(move |s| ((file.as_str(), s.name.as_str()), s)))
+        .flat_map(|(file, syms)| {
+            syms.iter()
+                .map(move |s| ((file.as_str(), s.name.as_str()), s))
+        })
         .collect();
 
     // Index head symbols by (file, name) → symbol
     let head_index: HashMap<(&str, &str), &Symbol> = head_symbols
         .iter()
-        .flat_map(|(file, syms)| syms.iter().map(move |s| ((file.as_str(), s.name.as_str()), s)))
+        .flat_map(|(file, syms)| {
+            syms.iter()
+                .map(move |s| ((file.as_str(), s.name.as_str()), s))
+        })
         .collect();
 
     // Check all base symbols
@@ -76,6 +85,7 @@ pub fn diff_symbols(
                     file: file.clone(),
                     status,
                     confirmed: false,
+                    lsp_range: None,
                 });
             } else {
                 // Not found in head at same location — check if moved
@@ -83,7 +93,10 @@ pub fn diff_symbols(
                     if hfile == file {
                         return None; // same file = rename, not move
                     }
-                    hsyms.iter().find(|s| s.name == sym.name).map(|s| (hfile.clone(), s))
+                    hsyms
+                        .iter()
+                        .find(|s| s.name == sym.name)
+                        .map(|s| (hfile.clone(), s))
                 });
 
                 if let Some((to_file, head_sym)) = moved_to {
@@ -98,6 +111,7 @@ pub fn diff_symbols(
                         file: file.clone(),
                         status,
                         confirmed: false,
+                    lsp_range: None,
                     });
                 } else {
                     result.push(DiffedSymbol {
@@ -106,6 +120,7 @@ pub fn diff_symbols(
                         file: file.clone(),
                         status: SymbolStatus::Removed,
                         confirmed: false,
+                    lsp_range: None,
                     });
                 }
             }
@@ -131,6 +146,7 @@ pub fn diff_symbols(
                         file: file.clone(),
                         status: SymbolStatus::Added,
                         confirmed: false,
+                    lsp_range: None,
                     });
                 }
             }
@@ -215,6 +231,8 @@ mod tests {
         let head = HashMap::from([("b.go".to_string(), vec![sym("Foo", 99)])]);
         let result = diff_symbols(&base, &head);
         let entry = result.iter().find(|d| d.name == "Foo").unwrap();
-        assert!(matches!(&entry.status, SymbolStatus::MovedModified { to_file } if to_file == "b.go"));
+        assert!(
+            matches!(&entry.status, SymbolStatus::MovedModified { to_file } if to_file == "b.go")
+        );
     }
 }

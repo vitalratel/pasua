@@ -57,9 +57,21 @@ impl PrMeta {
     /// Derive CI pass/fail from status check rollup. Returns None if mixed or absent.
     pub fn ci_status(&self) -> Option<&'static str> {
         self.status_check_rollup.as_deref().and_then(|checks| {
-            if checks.iter().any(|c| c.conclusion.as_deref() == Some("FAILURE")) {
+            if checks.iter().any(|c| {
+                c.conclusion.as_deref() == Some("FAILURE")
+                    || c.state.as_deref() == Some("FAILURE")
+                    || c.state.as_deref() == Some("ERROR")
+            }) {
                 Some("fail")
-            } else if checks.iter().all(|c| c.conclusion.as_deref() == Some("SUCCESS")) {
+            } else if checks.iter().any(|c| {
+                c.state.as_deref() == Some("PENDING")
+                    || (c.conclusion.is_none() && c.state.as_deref() != Some("SUCCESS"))
+            }) {
+                Some("pending")
+            } else if checks
+                .iter()
+                .all(|c| c.conclusion.as_deref() == Some("SUCCESS") || c.state.as_deref() == Some("SUCCESS"))
+            {
                 Some("pass")
             } else {
                 None
@@ -239,23 +251,6 @@ fn normalize_rename_path(path: &str) -> String {
     }
 }
 
-/// Get the raw unified diff for a single file between two refs.
-pub fn file_diff(repo: &Path, base: &str, head: &str, file: &str) -> Result<String> {
-    let output = Command::new("git")
-        .args(["diff", &format!("{base}...{head}"), "--", file])
-        .current_dir(repo)
-        .output()?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "git diff failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    Ok(String::from_utf8(output.stdout)?)
-}
-
 /// Read file contents at a given ref. Returns None if file doesn't exist at that ref.
 pub fn file_at(repo: &Path, git_ref: &str, file: &str) -> Result<Option<Vec<u8>>> {
     let output = Command::new("git")
@@ -304,7 +299,12 @@ pub fn remote_name(repo: &Path) -> Result<String> {
         .trim_end_matches(".git")
         .rsplit(':')
         .next()
-        .or_else(|| url.rsplit('/').nth(1).zip(url.rsplit('/').next()).map(|_| &url[..]))
+        .or_else(|| {
+            url.rsplit('/')
+                .nth(1)
+                .zip(url.rsplit('/').next())
+                .map(|_| &url[..])
+        })
         .unwrap_or(&url)
         .to_string();
 
@@ -328,7 +328,10 @@ pub fn list_commits(repo: &Path, range: &str) -> Result<Vec<(String, String)>> {
         .output()?;
 
     if !output.status.success() {
-        anyhow::bail!("git log failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "git log failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let mut commits = Vec::new();

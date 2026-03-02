@@ -1,8 +1,8 @@
 // ABOUTME: `pasua log` command — per-commit mini-overview for a ref range.
 // ABOUTME: Walks each commit and produces a Layer 1 overview per commit.
 
-use clap::Args;
 use anyhow::Result;
+use clap::Args;
 use std::path::PathBuf;
 
 use crate::core::{github, pipeline, render};

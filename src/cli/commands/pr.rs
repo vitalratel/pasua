@@ -1,8 +1,8 @@
 // ABOUTME: `pasua pr` command — PR envelope with metadata + Layer 1 diff.
 // ABOUTME: Fetches PR title, description, CI status via gh CLI.
 
-use clap::Args;
 use anyhow::Result;
+use clap::Args;
 use std::path::PathBuf;
 
 use crate::core::{github, pipeline, render};
@@ -30,14 +30,15 @@ pub async fn run(args: PrArgs) -> Result<()> {
     let diff_output = render::layer1(&result, &repo_label, base, head);
 
     let ci_status = meta.ci_status();
-    let review_count = meta.reviews.as_deref().map(|r| r.len()).unwrap_or(0);
+    let reviews = meta.reviews.as_deref().unwrap_or(&[]);
 
     let output = render::pr_envelope(
         meta.number,
         &meta.title,
         &meta.body,
+        &meta.state,
         ci_status,
-        review_count,
+        reviews,
         &diff_output,
     );
 

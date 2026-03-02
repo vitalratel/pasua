@@ -2,6 +2,7 @@
 // ABOUTME: Produces the token-efficient notation defined in the spec.
 
 use crate::core::diff::{DiffedSymbol, SymbolStatus};
+use crate::core::github::Review;
 use crate::core::pipeline::{DiffResult, FileDiff, FileStatus};
 use crate::languages::SymbolKind;
 
@@ -138,9 +139,7 @@ pub fn layer3(
     hunk: &str,
 ) -> String {
     let kind_str = kind_sigil(kind);
-    format!(
-        "--- {old_file}  {kind_str} {symbol}\n+++ {new_file}  {kind_str} {symbol}\n{hunk}"
-    )
+    format!("--- {old_file}  {kind_str} {symbol}\n+++ {new_file}  {kind_str} {symbol}\n{hunk}")
 }
 
 /// PR envelope around a Layer 1 diff.
@@ -148,18 +147,33 @@ pub fn pr_envelope(
     number: u64,
     title: &str,
     body: &str,
+    pr_state: &str,
     ci_status: Option<&str>,
-    review_count: usize,
+    reviews: &[Review],
     diff_output: &str,
 ) -> String {
+    let state = match pr_state.to_uppercase().as_str() {
+        "MERGED" => " [merged]",
+        "CLOSED" => " [closed]",
+        _ => "",
+    };
     let ci = ci_status.map(|s| format!(" [ci:{s}]")).unwrap_or_default();
-    let reviews = if review_count > 0 {
-        format!(" [reviews:{review_count}]")
-    } else {
-        String::new()
+    let approved = reviews
+        .iter()
+        .filter(|r| r.state.to_uppercase() == "APPROVED")
+        .count();
+    let changes = reviews
+        .iter()
+        .filter(|r| r.state.to_uppercase() == "CHANGES_REQUESTED")
+        .count();
+    let review_tag = match (approved, changes, reviews.len()) {
+        (0, 0, 0) => String::new(),
+        (a, 0, _) => format!(" [reviews:{a}✓]"),
+        (0, c, _) => format!(" [reviews:{c}✗]"),
+        (a, c, _) => format!(" [reviews:{a}✓{c}✗]"),
     };
 
-    let mut out = format!("PR#{number} \"{title}\"{ci}{reviews}\n");
+    let mut out = format!("PR#{number} \"{title}\"{state}{ci}{review_tag}\n");
     if !body.is_empty() {
         // First non-empty paragraph only
         let first_para = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
@@ -271,6 +285,7 @@ mod tests {
                 kind: SymbolKind::Fn,
                 status: SymbolStatus::Modified,
                 confirmed: false,
+                lsp_range: None,
             },
             DiffedSymbol {
                 name: "Bar".into(),
@@ -278,6 +293,7 @@ mod tests {
                 kind: SymbolKind::Ty,
                 status: SymbolStatus::Unchanged,
                 confirmed: false,
+                lsp_range: None,
             },
         ];
         let out = layer2("a.go", &syms);
@@ -286,10 +302,37 @@ mod tests {
     }
 
     #[test]
-    fn pr_envelope_format() {
-        let out = pr_envelope(42, "Fix thing", "Fixes the bug.", Some("pass"), 1, "diff here");
-        assert!(out.starts_with("PR#42 \"Fix thing\" [ci:pass] [reviews:1]"));
+    fn pr_envelope_open_with_approval() {
+        use crate::core::github::Review;
+        let reviews = vec![Review {
+            state: "APPROVED".into(),
+        }];
+        let out = pr_envelope(
+            42,
+            "Fix thing",
+            "Fixes the bug.",
+            "OPEN",
+            Some("pass"),
+            &reviews,
+            "diff here",
+        );
+        assert!(out.starts_with("PR#42 \"Fix thing\" [ci:pass] [reviews:1✓]"));
         assert!(out.contains("> Fixes the bug."));
         assert!(out.contains("---\ndiff here"));
+    }
+
+    #[test]
+    fn pr_envelope_merged_changes_requested() {
+        use crate::core::github::Review;
+        let reviews = vec![
+            Review {
+                state: "APPROVED".into(),
+            },
+            Review {
+                state: "CHANGES_REQUESTED".into(),
+            },
+        ];
+        let out = pr_envelope(7, "Rework", "", "MERGED", None, &reviews, "diff");
+        assert!(out.starts_with("PR#7 \"Rework\" [merged] [reviews:1✓1✗]"));
     }
 }

@@ -1,7 +1,7 @@
 // ABOUTME: Tree-sitter structural extraction — parses source files into symbol skeletons.
 // ABOUTME: Provides heuristic symbol identity without requiring LSP.
 
-use crate::languages::{registry, Symbol};
+use crate::languages::{Symbol, registry};
 use anyhow::Result;
 use tree_sitter::StreamingIterator;
 
@@ -39,7 +39,9 @@ pub fn extract(path: &str, source: &[u8]) -> Result<Vec<Symbol>> {
             let name = name_cap.node.utf8_text(source)?.to_string();
             let body: &str = outer.utf8_text(source).unwrap_or("");
             let body_hash = twox_hash::XxHash64::oneshot(0, body.as_bytes());
-            let kind = lang.symbol_kind(outer.kind()).unwrap_or(crate::languages::SymbolKind::Fn);
+            let kind = lang
+                .symbol_kind(outer.kind())
+                .unwrap_or(crate::languages::SymbolKind::Fn);
 
             symbols.push(Symbol {
                 name,

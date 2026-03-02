@@ -91,7 +91,9 @@ mod tests {
 
         let repo = Path::new("/repo");
         let value = vec!["hello".to_string(), "world".to_string()];
-        cache.put(repo, "main", "feature", "foo.go", &value).unwrap();
+        cache
+            .put(repo, "main", "feature", "foo.go", &value)
+            .unwrap();
 
         let got: Vec<String> = cache.get(repo, "main", "feature", "foo.go").unwrap();
         assert_eq!(got, value);

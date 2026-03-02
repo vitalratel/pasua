@@ -11,7 +11,7 @@ use crate::core::cache::Cache;
 use crate::core::github::{self, FileStat, GitStatus};
 use crate::core::skeletal;
 use crate::core::{semantic, worktree};
-use crate::languages::{registry, Symbol};
+use crate::languages::{Symbol, registry};
 
 /// Classified status of a file in the pasua output.
 #[derive(Debug, Clone)]
@@ -72,7 +72,17 @@ const LSP_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// `threshold`: line delta for auto-including Layer 2 on M/D files.
 /// `depth_symbols`: include Layer 2 for all files regardless of threshold.
-pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize, depth_symbols: bool) -> Result<DiffResult> {
+pub async fn run(
+    repo: &Path,
+    base: &str,
+    head: &str,
+    threshold: usize,
+    depth_symbols: bool,
+) -> Result<DiffResult> {
+    // Resolve symbolic refs to SHAs so cache keys are stable across commits.
+    let base_sha = github::resolve_ref(repo, base)?;
+    let head_sha = github::resolve_ref(repo, head)?;
+
     let stats = github::diff_stats(repo, base, head)?;
     let mut cache = Cache::new(Cache::default_path());
 
@@ -81,22 +91,30 @@ pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize, depth_sy
 
     // For files that look like they shrank significantly (large deletes, few adds),
     // check if new files contain their symbols — split detection.
-    detect_splits(repo, base, head, &stats, &mut file_diffs, &mut cache)?;
+    detect_splits(
+        repo,
+        &base_sha,
+        &head_sha,
+        &stats,
+        &mut file_diffs,
+        &mut cache,
+    )?;
 
     // Auto-include Layer 2 for S files and large M/D files
     for fd in &mut file_diffs {
-        let needs_layer2 = depth_symbols || match &fd.status {
-            FileStatus::Split { .. } => true,
-            FileStatus::Deleted { targets } if !targets.is_empty() => true,
-            FileStatus::Modified => fd.added + fd.removed >= threshold,
-            _ => false,
-        };
+        let needs_layer2 = depth_symbols
+            || match &fd.status {
+                FileStatus::Split { .. } => true,
+                FileStatus::Deleted { targets } if !targets.is_empty() => true,
+                FileStatus::Modified => fd.added + fd.removed >= threshold,
+                _ => false,
+            };
         if needs_layer2 {
-            let syms = if let Some(cached) = cache.get(repo, base, head, &fd.path) {
+            let syms = if let Some(cached) = cache.get(repo, &base_sha, &head_sha, &fd.path) {
                 cached
             } else {
-                let syms = compute_symbols(repo, base, head, &fd.path)?;
-                let _ = cache.put(repo, base, head, &fd.path, &syms);
+                let syms = compute_symbols(repo, &base_sha, &head_sha, &fd.path)?;
+                let _ = cache.put(repo, &base_sha, &head_sha, &fd.path, &syms);
                 syms
             };
             fd.symbols = Some(syms);
@@ -128,11 +146,7 @@ pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize, depth_sy
 /// Creates a worktree at `head`, starts the language server, and uses
 /// `textDocument/documentSymbol` to verify which symbols exist in each file.
 /// Updates `confirmed = true` where the LSP agrees with the heuristic result.
-async fn confirm_with_lsp(
-    repo: &Path,
-    head: &str,
-    file_diffs: &mut Vec<FileDiff>,
-) -> Result<()> {
+async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) -> Result<()> {
     // Determine which file extensions are present and have a supported language
     let extensions: Vec<&str> = file_diffs
         .iter()
@@ -144,31 +158,45 @@ async fn confirm_with_lsp(
         .collect();
 
     // Pick the first supported language with an available LSP server
-    let lang = extensions
-        .iter()
-        .find_map(|ext| {
-            let lang = registry::for_extension(ext)?;
-            let cmd = lang.lsp_command()[0];
-            if semantic::is_available(cmd) {
-                Some(lang)
-            } else {
-                None
-            }
-        });
+    let lang = extensions.iter().find_map(|ext| {
+        let lang = registry::for_extension(ext)?;
+        let cmd = lang.lsp_command()[0];
+        if semantic::is_available(cmd) {
+            Some(lang)
+        } else {
+            None
+        }
+    });
 
     let Some(lang) = lang else {
         return Ok(()); // No supported LSP available
     };
 
-    eprintln!("pasua: starting {} for LSP confirmation...", lang.lsp_command()[0]);
+    eprintln!(
+        "pasua: starting {} for LSP confirmation...",
+        lang.lsp_command()[0]
+    );
 
     // Create a worktree at head for LSP to index
     let wt = worktree::Worktree::create(repo, head)?;
     let wt_path = wt.path().to_path_buf();
 
-    let mut client = semantic::LspClient::spawn(lang.lsp_command(), &wt_path, LSP_TIMEOUT)
-        .await
-        .with_context(|| format!("Failed to start {}", lang.lsp_command()[0]))?;
+    if let Err(e) = lang.check_readiness(&wt_path) {
+        tracing::debug!(
+            "LSP readiness check failed for {}: {e}",
+            lang.lsp_command()[0]
+        );
+        return Ok(());
+    }
+
+    let mut client = semantic::LspClient::spawn(
+        lang.lsp_command(),
+        &wt_path,
+        lang.lsp_init_options(),
+        LSP_TIMEOUT,
+    )
+    .await
+    .with_context(|| format!("Failed to start {}", lang.lsp_command()[0]))?;
 
     eprintln!("pasua: LSP server ready, confirming symbols...");
 
@@ -191,16 +219,22 @@ async fn confirm_with_lsp(
 
         match client.document_symbols(&file_path, LSP_TIMEOUT).await {
             Ok(lsp_syms) => {
-                let lsp_names: std::collections::HashSet<String> =
-                    lsp_syms.iter().map(|s| s.name.clone()).collect();
-
                 // Confirm file-level entry
                 fd.confirmed = true;
 
-                // Confirm individual symbols if we have Layer 2
+                // Confirm individual symbols by name + kind match; capture LSP range
                 if let Some(syms) = &mut fd.symbols {
                     for sym in syms.iter_mut() {
-                        sym.confirmed = lsp_names.contains(&sym.name);
+                        if let Some(ls) = lsp_syms
+                            .iter()
+                            .find(|ls| ls.name == sym.name && lsp_kind_matches(ls.kind, sym.kind))
+                        {
+                            sym.confirmed = true;
+                            sym.lsp_range = Some((
+                                ls.range.start.line as usize + 1,
+                                ls.range.end.line as usize + 1,
+                            ));
+                        }
                     }
                 }
             }
@@ -215,7 +249,6 @@ async fn confirm_with_lsp(
 
     Ok(())
 }
-
 
 fn classify(stats: &[FileStat]) -> Vec<FileDiff> {
     stats
@@ -250,7 +283,12 @@ fn classify(stats: &[FileStat]) -> Vec<FileDiff> {
 ///
 /// Key uses `git_ref` for both base and head slots to distinguish per-ref
 /// symbol entries from cross-ref diff entries.
-fn extract_cached(cache: &mut Cache, repo: &Path, git_ref: &str, path: &str) -> Option<Vec<Symbol>> {
+fn extract_cached(
+    cache: &mut Cache,
+    repo: &Path,
+    git_ref: &str,
+    path: &str,
+) -> Option<Vec<Symbol>> {
     if let Some(cached) = cache.get::<Vec<Symbol>>(repo, git_ref, git_ref, path) {
         return Some(cached);
     }
@@ -269,7 +307,7 @@ fn detect_splits(
     base: &str,
     head: &str,
     stats: &[FileStat],
-    file_diffs: &mut Vec<FileDiff>,
+    file_diffs: &mut [FileDiff],
     cache: &mut Cache,
 ) -> Result<()> {
     // Find candidate source files: deleted or heavily-shrunken modified files
@@ -277,7 +315,9 @@ fn detect_splits(
         .iter()
         .filter(|s| {
             matches!(s.status, GitStatus::Deleted)
-                || (matches!(s.status, GitStatus::Modified) && s.removed > s.added * 2 && s.removed > 100)
+                || (matches!(s.status, GitStatus::Modified)
+                    && s.removed > s.added * 2
+                    && s.removed > 100)
         })
         .collect();
 
@@ -294,19 +334,19 @@ fn detect_splits(
     // Extract symbols from source files (at base) and target files (at head)
     let mut source_symbols: HashMap<String, Vec<Symbol>> = HashMap::new();
     for s in &sources {
-        if let Some(syms) = extract_cached(cache, repo, base, &s.path) {
-            if !syms.is_empty() {
-                source_symbols.insert(s.path.clone(), syms);
-            }
+        if let Some(syms) = extract_cached(cache, repo, base, &s.path)
+            && !syms.is_empty()
+        {
+            source_symbols.insert(s.path.clone(), syms);
         }
     }
 
     let mut target_symbols: HashMap<String, Vec<Symbol>> = HashMap::new();
     for t in &targets {
-        if let Some(syms) = extract_cached(cache, repo, head, &t.path) {
-            if !syms.is_empty() {
-                target_symbols.insert(t.path.clone(), syms);
-            }
+        if let Some(syms) = extract_cached(cache, repo, head, &t.path)
+            && !syms.is_empty()
+        {
+            target_symbols.insert(t.path.clone(), syms);
         }
     }
 
@@ -368,4 +408,24 @@ pub fn compute_symbols(
     let head_map = HashMap::from([(path.to_string(), head_syms)]);
 
     Ok(crate::core::diff::diff_symbols(&base_map, &head_map))
+}
+
+/// Match an LSP symbol kind against our language-agnostic SymbolKind.
+///
+/// LSP SymbolKind has ~26 values; we map them to our 8 semantic categories.
+/// Intentionally permissive: a match on name alone without kind disagreement is
+/// better than a false negative from an overly strict kind check.
+fn lsp_kind_matches(lsp: lsp_types::SymbolKind, ours: crate::languages::SymbolKind) -> bool {
+    use crate::languages::SymbolKind as S;
+    use lsp_types::SymbolKind as L;
+    match ours {
+        S::Fn => matches!(lsp, L::FUNCTION | L::METHOD | L::CONSTRUCTOR),
+        S::Ty => matches!(lsp, L::CLASS | L::STRUCT | L::OBJECT | L::TYPE_PARAMETER),
+        S::If => matches!(lsp, L::INTERFACE),
+        S::En => matches!(lsp, L::ENUM | L::ENUM_MEMBER),
+        S::Co => matches!(lsp, L::CONSTANT | L::VARIABLE | L::FIELD | L::PROPERTY),
+        S::Mo => matches!(lsp, L::MODULE | L::NAMESPACE | L::PACKAGE),
+        S::Im => matches!(lsp, L::CLASS | L::OBJECT | L::MODULE),
+        S::Ma => matches!(lsp, L::FUNCTION | L::OPERATOR),
+    }
 }

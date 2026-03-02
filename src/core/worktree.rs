@@ -40,7 +40,13 @@ impl Worktree {
         }
 
         let output = Command::new("git")
-            .args(["worktree", "add", "--detach", path.to_str().unwrap_or(""), git_ref])
+            .args([
+                "worktree",
+                "add",
+                "--detach",
+                path.to_str().unwrap_or(""),
+                git_ref,
+            ])
             .current_dir(repo)
             .output()?;
 

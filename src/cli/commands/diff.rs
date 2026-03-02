@@ -1,8 +1,8 @@
 // ABOUTME: `pasua diff` command — Layer 1 overview with optional auto-Layer 2.
 // ABOUTME: Auto-includes Layer 2 for split files and files exceeding the line threshold.
 
-use clap::Args;
 use anyhow::Result;
+use clap::Args;
 use std::path::PathBuf;
 
 use crate::core::{github, pipeline, render};

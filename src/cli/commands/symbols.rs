@@ -1,8 +1,8 @@
 // ABOUTME: `pasua symbols` command — Layer 2 symbol table for one file.
 // ABOUTME: Shows where each symbol moved or how it changed.
 
-use clap::Args;
 use anyhow::Result;
+use clap::Args;
 use std::path::PathBuf;
 
 use crate::core::{pipeline, render};

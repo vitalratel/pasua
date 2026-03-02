@@ -1,8 +1,8 @@
 // ABOUTME: `pasua serve` command — starts the MCP server on stdio.
 // ABOUTME: Exposes the same operations as the CLI via MCP protocol.
 
-use clap::Args;
 use anyhow::{Context, Result};
+use clap::Args;
 use rmcp::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
