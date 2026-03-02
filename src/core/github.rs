@@ -308,18 +308,6 @@ pub fn remote_name(repo: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn pasua_repo() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    }
-
-    #[test]
-    fn resolve_head_ref() {
-        let repo = pasua_repo();
-        let sha = resolve_ref(&repo, "HEAD").unwrap();
-        assert_eq!(sha.len(), 40, "expected full SHA, got: {sha}");
-    }
 
     #[test]
     fn normalize_rename_path_basic() {

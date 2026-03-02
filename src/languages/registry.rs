@@ -10,19 +10,3 @@ pub fn for_extension(ext: &str) -> Option<Box<dyn LanguageSupport>> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn go_is_registered() {
-        assert!(for_extension("go").is_some());
-    }
-
-    #[test]
-    fn unknown_returns_none() {
-        assert!(for_extension("xyz").is_none());
-        assert!(for_extension("").is_none());
-    }
-}

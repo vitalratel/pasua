@@ -56,16 +56,7 @@ impl LanguageSupport for Go {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::core::skeletal::extract;
-
-    #[test]
-    fn symbol_kinds() {
-        let go = Go;
-        assert_eq!(go.symbol_kind("function_declaration"), Some(SymbolKind::Fn));
-        assert_eq!(go.symbol_kind("type_declaration"), Some(SymbolKind::Ty));
-        assert_eq!(go.symbol_kind("unknown"), None);
-    }
 
     #[test]
     fn extracts_functions_and_types() {

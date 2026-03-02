@@ -2,10 +2,11 @@
 // ABOUTME: Produces per-symbol status: added, removed, modified, moved, renamed.
 
 use crate::languages::{Symbol, SymbolKind};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// The computed status of a symbol across two refs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SymbolStatus {
     /// Symbol exists only in head (new file or new symbol)
     Added,
@@ -28,7 +29,7 @@ pub enum SymbolStatus {
 }
 
 /// A symbol with its computed diff status.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiffedSymbol {
     pub name: String,
     pub kind: SymbolKind,

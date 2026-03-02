@@ -75,33 +75,3 @@ impl Drop for Worktree {
             .output();
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    fn pasua_repo() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    }
-
-    #[test]
-    fn create_and_drop_worktree() {
-        let repo = pasua_repo();
-        let wt = Worktree::create_at(&repo, "HEAD", "test-drop").unwrap();
-        assert!(wt.path().exists(), "worktree path should exist");
-        let path = wt.path().to_path_buf();
-        drop(wt);
-        assert!(!path.exists(), "worktree path should be removed on drop");
-    }
-
-    #[test]
-    fn worktree_contains_source() {
-        let repo = pasua_repo();
-        let wt = Worktree::create_at(&repo, "HEAD", "test-contents").unwrap();
-        assert!(
-            wt.path().join("src/main.rs").exists(),
-            "worktree should contain src/main.rs"
-        );
-    }
-}

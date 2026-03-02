@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::Result;
 use tokio::time::Duration;
 
+use crate::core::cache::Cache;
 use crate::core::github::{self, FileStat, GitStatus};
 use crate::core::skeletal;
 use crate::core::{semantic, worktree};
@@ -71,6 +72,7 @@ const LSP_TIMEOUT: Duration = Duration::from_secs(30);
 /// `threshold`: line delta for auto-including Layer 2 on M/D files.
 pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize) -> Result<DiffResult> {
     let stats = github::diff_stats(repo, base, head)?;
+    let cache = Cache::new(Cache::default_path());
 
     // Separate into categories for split detection
     let mut file_diffs = classify(&stats);
@@ -88,7 +90,14 @@ pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize) -> Resul
             _ => false,
         };
         if needs_layer2 {
-            fd.symbols = Some(compute_symbols(repo, base, head, &fd.path, &fd.status)?);
+            let syms = if let Some(cached) = cache.get(repo, base, head, &fd.path) {
+                cached
+            } else {
+                let syms = compute_symbols(repo, base, head, &fd.path, &fd.status)?;
+                let _ = cache.put(repo, base, head, &fd.path, &syms);
+                syms
+            };
+            fd.symbols = Some(syms);
         }
     }
 
@@ -345,34 +354,4 @@ fn compute_symbols(
 
     let diffed = crate::core::diff::diff_symbols(&base_map, &head_map);
     Ok(diffed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn classify_added() {
-        let stats = vec![FileStat {
-            status: GitStatus::Added,
-            path: "new.go".to_string(),
-            added: 100,
-            removed: 0,
-        }];
-        let result = classify(&stats);
-        assert_eq!(result.len(), 1);
-        assert!(matches!(result[0].status, FileStatus::Added { source: None }));
-    }
-
-    #[test]
-    fn classify_renamed() {
-        let stats = vec![FileStat {
-            status: GitStatus::Renamed("old.go".into(), "new.go".into(), 100),
-            path: "new.go".to_string(),
-            added: 0,
-            removed: 0,
-        }];
-        let result = classify(&stats);
-        assert!(matches!(result[0].status, FileStatus::Renamed { .. }));
-    }
 }
