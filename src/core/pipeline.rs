@@ -73,14 +73,14 @@ const LSP_TIMEOUT: Duration = Duration::from_secs(30);
 /// `depth_symbols`: include Layer 2 for all files regardless of threshold.
 pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize, depth_symbols: bool) -> Result<DiffResult> {
     let stats = github::diff_stats(repo, base, head)?;
-    let cache = Cache::new(Cache::default_path());
+    let mut cache = Cache::new(Cache::default_path());
 
     // Separate into categories for split detection
     let mut file_diffs = classify(&stats);
 
     // For files that look like they shrank significantly (large deletes, few adds),
     // check if new files contain their symbols — split detection.
-    detect_splits(repo, base, head, &stats, &mut file_diffs, &cache)?;
+    detect_splits(repo, base, head, &stats, &mut file_diffs, &mut cache)?;
 
     // Auto-include Layer 2 for S files and large M/D files
     for fd in &mut file_diffs {
@@ -250,7 +250,7 @@ fn classify(stats: &[FileStat]) -> Vec<FileDiff> {
 ///
 /// Key uses `git_ref` for both base and head slots to distinguish per-ref
 /// symbol entries from cross-ref diff entries.
-fn extract_cached(cache: &Cache, repo: &Path, git_ref: &str, path: &str) -> Option<Vec<Symbol>> {
+fn extract_cached(cache: &mut Cache, repo: &Path, git_ref: &str, path: &str) -> Option<Vec<Symbol>> {
     if let Some(cached) = cache.get::<Vec<Symbol>>(repo, git_ref, git_ref, path) {
         return Some(cached);
     }
@@ -270,7 +270,7 @@ fn detect_splits(
     head: &str,
     stats: &[FileStat],
     file_diffs: &mut Vec<FileDiff>,
-    cache: &Cache,
+    cache: &mut Cache,
 ) -> Result<()> {
     // Find candidate source files: deleted or heavily-shrunken modified files
     let sources: Vec<&FileStat> = stats

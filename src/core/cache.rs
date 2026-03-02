@@ -7,8 +7,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Cache stored on disk as MessagePack.
+///
+/// Loaded once at construction; each `put` flushes the updated store to disk.
 pub struct Cache {
     path: PathBuf,
+    store: Store,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -18,7 +21,11 @@ struct Store {
 
 impl Cache {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        let store = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| rmp_serde::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        Self { path, store }
     }
 
     /// Default cache location: ~/.cache/pasua/cache.msgpack
@@ -29,18 +36,11 @@ impl Cache {
         p
     }
 
-    fn load(&self) -> Store {
-        std::fs::read(&self.path)
-            .ok()
-            .and_then(|bytes| rmp_serde::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    fn save(&self, store: &Store) -> Result<()> {
+    fn save(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let bytes = rmp_serde::to_vec(store)?;
+        let bytes = rmp_serde::to_vec(&self.store)?;
         std::fs::write(&self.path, bytes)?;
         Ok(())
     }
@@ -56,27 +56,25 @@ impl Cache {
         head: &str,
         file: &str,
     ) -> Option<T> {
-        let store = self.load();
         let key = Self::key(repo, base, head, file);
-        store
+        self.store
             .entries
             .get(&key)
             .and_then(|bytes| rmp_serde::from_slice(bytes).ok())
     }
 
     pub fn put<T: Serialize>(
-        &self,
+        &mut self,
         repo: &Path,
         base: &str,
         head: &str,
         file: &str,
         value: &T,
     ) -> Result<()> {
-        let mut store = self.load();
         let key = Self::key(repo, base, head, file);
         let bytes = rmp_serde::to_vec(value)?;
-        store.entries.insert(key, bytes);
-        self.save(&store)
+        self.store.entries.insert(key, bytes);
+        self.save()
     }
 }
 
@@ -89,7 +87,7 @@ mod tests {
     fn round_trip() {
         let dir = TempDir::new().unwrap();
         let cache_path = dir.path().join("cache.msgpack");
-        let cache = Cache::new(cache_path);
+        let mut cache = Cache::new(cache_path);
 
         let repo = Path::new("/repo");
         let value = vec!["hello".to_string(), "world".to_string()];
@@ -105,5 +103,21 @@ mod tests {
         let cache = Cache::new(dir.path().join("cache.msgpack"));
         let got: Option<String> = cache.get(Path::new("/repo"), "a", "b", "c.go");
         assert!(got.is_none());
+    }
+
+    #[test]
+    fn multiple_puts_accumulate() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cache.msgpack");
+        let mut cache = Cache::new(path.clone());
+        let repo = Path::new("/repo");
+
+        cache.put(repo, "a", "b", "f1.go", &1u32).unwrap();
+        cache.put(repo, "a", "b", "f2.go", &2u32).unwrap();
+
+        // Both entries survive in a fresh load from disk
+        let c2 = Cache::new(path);
+        assert_eq!(c2.get::<u32>(repo, "a", "b", "f1.go"), Some(1));
+        assert_eq!(c2.get::<u32>(repo, "a", "b", "f2.go"), Some(2));
     }
 }
