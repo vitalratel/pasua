@@ -70,7 +70,8 @@ const LSP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Run the full Layer 1 pipeline.
 ///
 /// `threshold`: line delta for auto-including Layer 2 on M/D files.
-pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize) -> Result<DiffResult> {
+/// `depth_symbols`: include Layer 2 for all files regardless of threshold.
+pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize, depth_symbols: bool) -> Result<DiffResult> {
     let stats = github::diff_stats(repo, base, head)?;
     let cache = Cache::new(Cache::default_path());
 
@@ -79,11 +80,11 @@ pub async fn run(repo: &Path, base: &str, head: &str, threshold: usize) -> Resul
 
     // For files that look like they shrank significantly (large deletes, few adds),
     // check if new files contain their symbols — split detection.
-    detect_splits(repo, base, head, &stats, &mut file_diffs)?;
+    detect_splits(repo, base, head, &stats, &mut file_diffs, &cache)?;
 
     // Auto-include Layer 2 for S files and large M/D files
     for fd in &mut file_diffs {
-        let needs_layer2 = match &fd.status {
+        let needs_layer2 = depth_symbols || match &fd.status {
             FileStatus::Split { .. } => true,
             FileStatus::Deleted { targets } if !targets.is_empty() => true,
             FileStatus::Modified => fd.added + fd.removed >= threshold,
@@ -245,6 +246,22 @@ fn classify(stats: &[FileStat]) -> Vec<FileDiff> {
         .collect()
 }
 
+/// Fetch and cache extracted symbols for a file at a single ref.
+///
+/// Key uses `git_ref` for both base and head slots to distinguish per-ref
+/// symbol entries from cross-ref diff entries.
+fn extract_cached(cache: &Cache, repo: &Path, git_ref: &str, path: &str) -> Option<Vec<Symbol>> {
+    if let Some(cached) = cache.get::<Vec<Symbol>>(repo, git_ref, git_ref, path) {
+        return Some(cached);
+    }
+    let bytes = github::file_at(repo, git_ref, path).ok()??;
+    let syms = skeletal::extract(path, &bytes).ok()?;
+    if !syms.is_empty() {
+        let _ = cache.put(repo, git_ref, git_ref, path, &syms);
+    }
+    Some(syms)
+}
+
 /// Heuristic split detection: if a deleted/large-shrunken file's symbols appear
 /// in newly added files, mark the old file as Split and annotate the new files.
 fn detect_splits(
@@ -253,6 +270,7 @@ fn detect_splits(
     head: &str,
     stats: &[FileStat],
     file_diffs: &mut Vec<FileDiff>,
+    cache: &Cache,
 ) -> Result<()> {
     // Find candidate source files: deleted or heavily-shrunken modified files
     let sources: Vec<&FileStat> = stats
@@ -276,21 +294,19 @@ fn detect_splits(
     // Extract symbols from source files (at base) and target files (at head)
     let mut source_symbols: HashMap<String, Vec<Symbol>> = HashMap::new();
     for s in &sources {
-        if let Ok(Some(bytes)) = github::file_at(repo, base, &s.path)
-            && let Ok(syms) = skeletal::extract(&s.path, &bytes)
-            && !syms.is_empty()
-        {
-            source_symbols.insert(s.path.clone(), syms);
+        if let Some(syms) = extract_cached(cache, repo, base, &s.path) {
+            if !syms.is_empty() {
+                source_symbols.insert(s.path.clone(), syms);
+            }
         }
     }
 
     let mut target_symbols: HashMap<String, Vec<Symbol>> = HashMap::new();
     for t in &targets {
-        if let Ok(Some(bytes)) = github::file_at(repo, head, &t.path)
-            && let Ok(syms) = skeletal::extract(&t.path, &bytes)
-            && !syms.is_empty()
-        {
-            target_symbols.insert(t.path.clone(), syms);
+        if let Some(syms) = extract_cached(cache, repo, head, &t.path) {
+            if !syms.is_empty() {
+                target_symbols.insert(t.path.clone(), syms);
+            }
         }
     }
 

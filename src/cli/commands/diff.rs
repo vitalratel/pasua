@@ -15,9 +15,9 @@ pub struct DiffArgs {
     pub base: String,
     /// Head ref (branch, commit, or tag)
     pub head: String,
-    /// Include Layer 2 symbols for all files
-    #[arg(long = "depth", value_name = "DEPTH")]
-    pub depth_symbols: bool,
+    /// Include Layer 2 symbols for all files (--depth=symbols)
+    #[arg(long, value_name = "DEPTH")]
+    pub depth: Option<String>,
     /// Line delta threshold for auto-including Layer 2 (default: 200)
     #[arg(long, default_value = "200")]
     pub threshold: usize,
@@ -25,7 +25,8 @@ pub struct DiffArgs {
 
 pub async fn run(args: DiffArgs) -> Result<()> {
     let repo = &args.repo;
-    let result = pipeline::run(repo, &args.base, &args.head, args.threshold).await?;
+    let depth_symbols = args.depth.as_deref() == Some("symbols");
+    let result = pipeline::run(repo, &args.base, &args.head, args.threshold, depth_symbols).await?;
     let repo_label = github::remote_name(repo).unwrap_or_else(|_| repo.display().to_string());
     let output = render::layer1(&result, &repo_label, &args.base, &args.head);
     print!("{output}");
