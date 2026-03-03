@@ -12,7 +12,15 @@ use clap::{Parser, Subcommand};
 
 /// Token-efficient semantic code diff for AI coding agents.
 #[derive(Parser, Debug)]
-#[command(name = "pasua", version)]
+#[command(
+    name = "pasua",
+    version,
+    after_help = "\
+Output sigils:  M=modified  A=added  D=deleted  S=split(one→many)  V=renamed
+Confidence:     !=LSP confirmed  ?=heuristic only
+Symbol kinds:   fn=function  ty=type/struct  if=interface/trait  en=enum  co=const/var  mo=module  im=impl/extension  ma=macro
+Symbol status:  +=added  -=removed  *=modified  →path=moved  *→path=moved+modified  ~name=renamed"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

@@ -99,7 +99,12 @@ impl ServerHandler for PasuaServer {
                  3. action=hunk {base, head, file, symbol} — exact diff for a symbol of interest\n\
                  \n\
                  All actions require repo (absolute path to a local git clone).\n\
-                 Stop when you have enough context — most tasks need only steps 1–2."
+                 Stop when you have enough context — most tasks need only steps 1–2.\n\
+                 \n\
+                 File sigils: M=modified  A=added  D=deleted  S=split(one→many)  V=renamed\n\
+                 Confidence:  !=LSP confirmed  ?=heuristic only\n\
+                 Symbol kinds: fn=function  ty=type/struct  if=interface/trait  en=enum  co=const/var  mo=module  im=impl/extension  ma=macro\n\
+                 Symbol status: +=added  -=removed  *=modified  →path=moved  *→path=moved+modified  ~name=renamed"
                     .into(),
             ),
         }

@@ -40,10 +40,23 @@ pub struct DiffedSymbol {
     /// LSP-confirmed line range (1-indexed start, 1-indexed end), if available.
     #[serde(default)]
     pub lsp_range: Option<(usize, usize)>,
+    /// Line count in head (0 for removed symbols).
+    #[serde(default)]
+    pub head_lines: usize,
+    /// Line count in base (0 for added symbols).
+    #[serde(default)]
+    pub base_lines: usize,
 }
 
 impl DiffedSymbol {
-    fn new(name: String, kind: SymbolKind, file: String, status: SymbolStatus) -> Self {
+    fn new(
+        name: String,
+        kind: SymbolKind,
+        file: String,
+        status: SymbolStatus,
+        base_lines: usize,
+        head_lines: usize,
+    ) -> Self {
         Self {
             name,
             kind,
@@ -51,6 +64,8 @@ impl DiffedSymbol {
             status,
             confirmed: false,
             lsp_range: None,
+            head_lines,
+            base_lines,
         }
     }
 }
@@ -86,7 +101,9 @@ pub fn diff_symbols(
     for (file, syms) in base_symbols {
         for sym in syms {
             let key = (file.as_str(), sym.name.as_str());
+            let base_lines = sym.end_line.saturating_sub(sym.start_line) + 1;
             if let Some(head_sym) = head_index.get(&key) {
+                let head_lines = head_sym.end_line.saturating_sub(head_sym.start_line) + 1;
                 let status = if sym.body_hash == head_sym.body_hash {
                     SymbolStatus::Unchanged
                 } else {
@@ -97,6 +114,8 @@ pub fn diff_symbols(
                     sym.kind,
                     file.clone(),
                     status,
+                    base_lines,
+                    head_lines,
                 ));
             } else {
                 // Not found in head at same location — check if moved
@@ -111,6 +130,7 @@ pub fn diff_symbols(
                 });
 
                 if let Some((to_file, head_sym)) = moved_to {
+                    let head_lines = head_sym.end_line.saturating_sub(head_sym.start_line) + 1;
                     let status = if sym.body_hash == head_sym.body_hash {
                         SymbolStatus::Moved { to_file }
                     } else {
@@ -121,6 +141,8 @@ pub fn diff_symbols(
                         sym.kind,
                         file.clone(),
                         status,
+                        base_lines,
+                        head_lines,
                     ));
                 } else {
                     result.push(DiffedSymbol::new(
@@ -128,6 +150,8 @@ pub fn diff_symbols(
                         sym.kind,
                         file.clone(),
                         SymbolStatus::Removed,
+                        base_lines,
+                        0,
                     ));
                 }
             }
@@ -147,11 +171,14 @@ pub fn diff_symbols(
                     )
                 });
                 if !came_from_move {
+                    let head_lines = sym.end_line.saturating_sub(sym.start_line) + 1;
                     result.push(DiffedSymbol::new(
                         sym.name.clone(),
                         sym.kind,
                         file.clone(),
                         SymbolStatus::Added,
+                        0,
+                        head_lines,
                     ));
                 }
             }

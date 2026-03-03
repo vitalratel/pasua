@@ -65,6 +65,8 @@ mod tests {
             status: SymbolStatus::Modified,
             confirmed: false,
             lsp_range: None,
+            head_lines: 0,
+            base_lines: 0,
         }
     }
 
