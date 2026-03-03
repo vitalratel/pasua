@@ -1,0 +1,12 @@
+#!/bin/sh
+# ABOUTME: Pre-commit hook — fast local checks before CI sees the code
+# ABOUTME: Install once with: git config core.hooksPath .githooks
+
+set -e
+
+echo "Running pre-commit checks..."
+
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+
+echo "All checks passed."

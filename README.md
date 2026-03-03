@@ -146,6 +146,12 @@ cargo fmt && cargo clippy
 cargo build --release
 ```
 
+Install the pre-commit hook (one-time):
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Contributing
 
 This is a personal project. Issues and feature requests are welcome, but unsolicited pull requests will likely be closed. If you'd like to contribute, open an issue first to discuss.
