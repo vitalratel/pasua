@@ -13,7 +13,7 @@ pub struct PrArgs {
     pub repo: PathBuf,
     /// Pull request number
     pub number: u64,
-    /// Line delta threshold for auto Layer 2 (default: 200)
+    /// Line delta threshold for auto-expanding a file's symbols
     #[arg(long, default_value = "200")]
     pub threshold: usize,
 }
@@ -25,7 +25,7 @@ pub async fn run(args: PrArgs) -> Result<()> {
     let base = &meta.base_ref_name;
     let head = &meta.head_ref_name;
 
-    let result = pipeline::run(repo, base, head, args.threshold, false).await?;
+    let result = pipeline::run(repo, base, head, args.threshold, false, true).await?;
     let repo_label =
         github::remote_name(repo, base, head).unwrap_or_else(|_| repo.display().to_string());
     let diff_output = render::layer1(&result, &repo_label, base, head);

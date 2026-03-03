@@ -67,10 +67,9 @@ impl PasuaServer {
         }
     }
 
-    /// Semantic code diff for AI agents. Operations: diff, symbols, hunk, pr, log.
     #[tool(
         name = "pasua",
-        description = "Semantic diff: diff <repo> <base> <head> | symbols <repo> <base> <head> <file> | hunk <repo> <base> <head> <file> <symbol> | pr <repo> <pr_number> | log <repo> <range>"
+        description = "Semantic diff for AI agents. Drill down only as far as needed.\n\nWorkflow: summary (or diff/pr) → symbols → hunk\n\nActions (all require repo = absolute path to local clone):\n  summary {base, head}                File-level overview only; no symbol expansion\n  diff    {base, head}                File-level overview; auto-expands large/split files\n  symbols {base, head, file}          Changed symbols for one file\n  hunk    {base, head, file, symbol}  Exact diff for one symbol\n  pr      {pr_number}                 PR metadata (title, CI, reviews) + file-level diff\n  log     {range}                     File-level overview per commit (e.g. range=\"main..feature\")"
     )]
     async fn pasua(&self, params: Parameters<PasuaParams>) -> Result<String, String> {
         self.execute(params.0).await
@@ -86,12 +85,23 @@ impl ServerHandler for PasuaServer {
             server_info: Implementation {
                 name: "pasua".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
-                title: None,
-                description: None,
+                title: Some("pasua — semantic diff for AI agents".into()),
+                description: Some("Compares branches, commits, and PRs with structural understanding. Drill down from file-level overview to individual symbols as needed.".into()),
                 icons: None,
                 website_url: None,
             },
-            instructions: None,
+            instructions: Some(
+                "Typical workflow:\n\
+                 1. action=summary {base, head} — file-level overview, no expansion (good starting point for large diffs)\n\
+                    action=diff {base, head} — same but auto-expands large/split files\n\
+                    action=pr {pr_number} — PR metadata + file-level diff\n\
+                 2. action=symbols {base, head, file} — changed symbols in a file of interest\n\
+                 3. action=hunk {base, head, file, symbol} — exact diff for a symbol of interest\n\
+                 \n\
+                 All actions require repo (absolute path to a local git clone).\n\
+                 Stop when you have enough context — most tasks need only steps 1–2."
+                    .into(),
+            ),
         }
     }
 }
@@ -105,7 +115,17 @@ impl PasuaServer {
             "diff" => {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
-                let result = pipeline::run(&repo, base, head, threshold, false)
+                let result = pipeline::run(&repo, base, head, threshold, false, true)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let repo_label =
+                    github::remote_name(&repo, base, head).unwrap_or_else(|_| params.repo.clone());
+                Ok(render::layer1(&result, &repo_label, base, head))
+            }
+            "summary" => {
+                let base = require(&params.base, "base")?;
+                let head = require(&params.head, "head")?;
+                let result = pipeline::run(&repo, base, head, threshold, false, false)
                     .await
                     .map_err(|e| e.to_string())?;
                 let repo_label =
@@ -133,7 +153,7 @@ impl PasuaServer {
                 let meta = github::pr_meta(&repo, pr_number).map_err(|e| e.to_string())?;
                 let base = &meta.base_ref_name;
                 let head = &meta.head_ref_name;
-                let result = pipeline::run(&repo, base, head, threshold, false)
+                let result = pipeline::run(&repo, base, head, threshold, false, true)
                     .await
                     .map_err(|e| e.to_string())?;
                 let repo_label =
@@ -157,7 +177,7 @@ impl PasuaServer {
                 let mut out = String::new();
                 for (sha, subject) in &commits {
                     let parent = format!("{sha}^");
-                    let result = pipeline::run(&repo, &parent, sha, threshold, false)
+                    let result = pipeline::run(&repo, &parent, sha, threshold, false, true)
                         .await
                         .map_err(|e| e.to_string())?;
                     out.push_str(&format!("{}\n", render::log_entry(sha, subject, &result)));
@@ -169,7 +189,7 @@ impl PasuaServer {
                 Ok(out)
             }
             other => Err(format!(
-                "Unknown action: '{other}'. Use: diff | symbols | hunk | pr | log"
+                "Unknown action: '{other}'. Use: summary | diff | symbols | hunk | pr | log"
             )),
         }
     }

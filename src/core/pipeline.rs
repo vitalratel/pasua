@@ -74,16 +74,30 @@ const LSP_TIMEOUT: Duration = Duration::from_secs(30);
 /// timeout fires and we proceed with whatever symbols are available.
 const LSP_INDEXING_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Run the full Layer 1 pipeline.
+/// Whether a file should have its symbols computed.
+fn needs_expand(fd: &FileDiff, expand: bool, depth_symbols: bool, threshold: usize) -> bool {
+    expand
+        && (depth_symbols
+            || match &fd.status {
+                FileStatus::Split { .. } => true,
+                FileStatus::Deleted { targets } if !targets.is_empty() => true,
+                FileStatus::Modified => fd.added + fd.removed >= threshold,
+                _ => false,
+            })
+}
+
+/// Run the full diff pipeline.
 ///
-/// `threshold`: line delta for auto-including Layer 2 on M/D files.
-/// `depth_symbols`: include Layer 2 for all files regardless of threshold.
+/// `threshold`: line delta for auto-expanding symbols on M/D files.
+/// `depth_symbols`: expand symbols for all files regardless of threshold.
+/// `expand`: when false, suppress all symbol computation (file-level output only).
 pub async fn run(
     repo: &Path,
     base: &str,
     head: &str,
     threshold: usize,
     depth_symbols: bool,
+    expand: bool,
 ) -> Result<DiffResult> {
     // Resolve symbolic refs to SHAs so cache keys are stable across commits.
     let base_sha = git::resolve_ref(repo, base)?;
@@ -106,16 +120,9 @@ pub async fn run(
         &mut cache,
     )?;
 
-    // Auto-include Layer 2 for S files and large M/D files
+    // Auto-include symbols for S files and large M/D files
     for fd in &mut file_diffs {
-        let needs_layer2 = depth_symbols
-            || match &fd.status {
-                FileStatus::Split { .. } => true,
-                FileStatus::Deleted { targets } if !targets.is_empty() => true,
-                FileStatus::Modified => fd.added + fd.removed >= threshold,
-                _ => false,
-            };
-        if needs_layer2 {
+        if needs_expand(fd, expand, depth_symbols, threshold) {
             let syms = if let Some(cached) = cache.get(repo, &base_sha, &head_sha, &fd.path) {
                 cached
             } else {
@@ -489,6 +496,85 @@ async fn query_lsp_symbols(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expand_false_never_expands() {
+        let cases = vec![
+            FileDiff {
+                status: FileStatus::Modified,
+                path: "a.go".into(),
+                added: 500,
+                removed: 500,
+                symbols: None,
+                confirmed: false,
+            },
+            FileDiff {
+                status: FileStatus::Split {
+                    targets: vec!["b.go".into()],
+                },
+                path: "a.go".into(),
+                added: 0,
+                removed: 500,
+                symbols: None,
+                confirmed: false,
+            },
+            FileDiff {
+                status: FileStatus::Deleted {
+                    targets: vec!["b.go".into()],
+                },
+                path: "a.go".into(),
+                added: 0,
+                removed: 500,
+                symbols: None,
+                confirmed: false,
+            },
+        ];
+        for fd in &cases {
+            assert!(
+                !needs_expand(fd, false, true, 0),
+                "expand=false must suppress all expansion"
+            );
+        }
+    }
+
+    #[test]
+    fn expand_true_respects_threshold_and_depth() {
+        let large_modified = FileDiff {
+            status: FileStatus::Modified,
+            path: "a.go".into(),
+            added: 150,
+            removed: 100,
+            symbols: None,
+            confirmed: false,
+        };
+        let small_modified = FileDiff {
+            status: FileStatus::Modified,
+            path: "b.go".into(),
+            added: 10,
+            removed: 5,
+            symbols: None,
+            confirmed: false,
+        };
+        let split = FileDiff {
+            status: FileStatus::Split {
+                targets: vec!["c.go".into()],
+            },
+            path: "a.go".into(),
+            added: 0,
+            removed: 500,
+            symbols: None,
+            confirmed: false,
+        };
+
+        // Large modified exceeds threshold of 200
+        assert!(needs_expand(&large_modified, true, false, 200));
+        // Small modified does not
+        assert!(!needs_expand(&small_modified, true, false, 200));
+        // depth_symbols forces expansion regardless of size
+        assert!(needs_expand(&small_modified, true, true, 200));
+        // Split always expands when expand=true
+        assert!(needs_expand(&split, true, false, 200));
+    }
 
     #[test]
     fn lang_groups_are_distinct_per_lsp_command() {

@@ -20,15 +20,15 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Layer 1 overview (+ auto Layer 2 for split/large files)
+    /// File-level diff overview; auto-expands large and split files
     Diff(diff::DiffArgs),
-    /// Layer 2 symbol table for one file
+    /// Changed symbols in one file
     Symbols(symbols::SymbolsArgs),
-    /// Layer 3 scoped diff for one symbol
+    /// Exact diff for one symbol
     Hunk(hunk::HunkArgs),
-    /// PR envelope + Layer 1
+    /// PR metadata (title, CI status, reviews) with file-level diff
     Pr(pr::PrArgs),
-    /// Per-commit mini-overview for a commit range
+    /// File-level overview for each commit in a range
     Log(log::LogArgs),
     /// Start MCP server
     Serve(serve::ServeArgs),
