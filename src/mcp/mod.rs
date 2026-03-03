@@ -108,14 +108,16 @@ impl PasuaServer {
                 let result = pipeline::run(&repo, base, head, threshold, false)
                     .await
                     .map_err(|e| e.to_string())?;
-                let repo_label = github::remote_name(&repo).unwrap_or_else(|_| params.repo.clone());
+                let repo_label =
+                    github::remote_name(&repo, base, head).unwrap_or_else(|_| params.repo.clone());
                 Ok(render::layer1(&result, &repo_label, base, head))
             }
             "symbols" => {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
                 let file = require(&params.file, "file")?;
-                let diffed = pipeline::compute_symbols(&repo, base, head, file)
+                let diffed = pipeline::symbols_confirmed(&repo, base, head, file)
+                    .await
                     .map_err(|e| e.to_string())?;
                 Ok(render::layer2(file, &diffed))
             }
@@ -134,7 +136,8 @@ impl PasuaServer {
                 let result = pipeline::run(&repo, base, head, threshold, false)
                     .await
                     .map_err(|e| e.to_string())?;
-                let repo_label = github::remote_name(&repo).unwrap_or_else(|_| params.repo.clone());
+                let repo_label =
+                    github::remote_name(&repo, base, head).unwrap_or_else(|_| params.repo.clone());
                 let diff_output = render::layer1(&result, &repo_label, base, head);
                 let ci = meta.ci_status();
                 let reviews = meta.reviews.as_deref().unwrap_or(&[]);

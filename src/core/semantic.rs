@@ -6,7 +6,7 @@ use lsp_types::{
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
     DocumentSymbolParams, InitializeParams, InitializeResult, Location, Range,
     TextDocumentClientCapabilities, TextDocumentIdentifier, TextDocumentItem, Uri,
-    WorkspaceClientCapabilities, WorkspaceFolder,
+    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -98,6 +98,10 @@ impl LspClient {
             }]),
             initialization_options: Some(init_options),
             capabilities: ClientCapabilities {
+                window: Some(WindowClientCapabilities {
+                    work_done_progress: Some(true),
+                    ..Default::default()
+                }),
                 workspace: Some(WorkspaceClientCapabilities {
                     workspace_folders: Some(true),
                     ..Default::default()
@@ -157,6 +161,7 @@ impl LspClient {
             .request_raw("textDocument/documentSymbol", params, request_timeout)
             .await?;
 
+        tracing::debug!("LSP documentSymbol raw for {}: {:?}", path.display(), raw);
         flatten_symbols(raw)
     }
 
@@ -169,6 +174,110 @@ impl LspClient {
         let _ = self.notify("exit", json!({})).await;
         let _ = self.process.kill().await;
         Ok(())
+    }
+
+    /// Wait for the language server to finish its initial workspace setup.
+    ///
+    /// Two-phase wait:
+    /// 1. Wait for a "setting up" or "load" progress token to end (required).
+    /// 2. Briefly wait for a "load" token to begin (handles cold module cache).
+    ///    If no load begins within a short window, assumes warm cache and returns.
+    ///
+    /// Responds to server requests automatically and buffers early responses.
+    /// Silently succeeds on timeout — caller proceeds with partial indexing.
+    pub async fn wait_for_indexing(&mut self, dur: Duration) -> Result<()> {
+        let result = tokio::time::timeout(dur, self.indexing_inner()).await;
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_timeout) => {
+                tracing::debug!("LSP indexing wait timed out, proceeding with available results");
+                Ok(())
+            }
+        }
+    }
+
+    async fn indexing_inner(&mut self) -> Result<()> {
+        // Phase 1: wait for the first setup/load progress token to end.
+        let mut setup_token: Option<Value> = None;
+        loop {
+            match self.read_and_dispatch().await? {
+                MessageKind::ProgressBegin { token, title } => {
+                    let t = title.to_lowercase();
+                    tracing::debug!("LSP ProgressBegin token={token:?} title={title:?}");
+                    if t.contains("load") || t.contains("setting up") {
+                        setup_token = Some(token);
+                    }
+                }
+                MessageKind::ProgressEnd { token } => {
+                    tracing::debug!("LSP ProgressEnd token={token:?} setup_token={setup_token:?}");
+                    if setup_token.as_ref() == Some(&token) {
+                        tracing::debug!(
+                            "LSP setup/load token ended; checking for follow-on loading"
+                        );
+                        // Phase 2: if setup (not a "load") just ended, wait briefly for
+                        // "Loading Packages" to begin (cold module cache path).
+                        // If it doesn't start within the window, the module cache is warm.
+                        return self.wait_for_load_after_setup().await;
+                    }
+                }
+                MessageKind::Response { id, result } => {
+                    self.pending.insert(id, result);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// After a setup token ends, wait briefly to see if "Loading Packages" begins.
+    /// If not, return immediately (warm cache). If it does, wait for it to finish.
+    async fn wait_for_load_after_setup(&mut self) -> Result<()> {
+        // Determine if the token that just ended was already a "load" token.
+        // We don't have the title here, so use a 200ms probe window.
+        let probe =
+            tokio::time::timeout(Duration::from_millis(200), self.wait_for_load_begin()).await;
+
+        match probe {
+            Ok(Ok(load_token)) => {
+                tracing::debug!("LSP load token started; waiting for it to end");
+                // Wait for this load token to end
+                loop {
+                    match self.read_and_dispatch().await? {
+                        MessageKind::ProgressEnd { token } if token == load_token => {
+                            tracing::debug!("LSP load token ended");
+                            return Ok(());
+                        }
+                        MessageKind::Response { id, result } => {
+                            self.pending.insert(id, result);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {
+                // No load started — warm cache, already ready
+                tracing::debug!("LSP no follow-on loading; warm cache assumed");
+                Ok(())
+            }
+        }
+    }
+
+    /// Read messages until a "Loading Packages" begin is seen. Returns its token.
+    async fn wait_for_load_begin(&mut self) -> Result<Value> {
+        loop {
+            match self.read_and_dispatch().await? {
+                MessageKind::ProgressBegin { token, title }
+                    if title.to_lowercase().contains("load") =>
+                {
+                    tracing::debug!("LSP load begin token={token:?} title={title:?}");
+                    return Ok(token);
+                }
+                MessageKind::Response { id, result } => {
+                    self.pending.insert(id, result);
+                }
+                _ => {}
+            }
+        }
     }
 
     // ── JSON-RPC internals ────────────────────────────────────────────────────
@@ -223,42 +332,33 @@ impl LspClient {
     }
 
     async fn recv_response(&mut self, id: u64) -> Result<Value> {
-        // Check pending cache first
         if let Some(v) = self.pending.remove(&id) {
             return Ok(v);
         }
-
         loop {
-            let msg = self.read_message().await?;
-
-            // Only JSON objects matter
-            let obj = match msg {
-                Value::Object(m) => m,
-                _ => continue,
-            };
-
-            // Skip notifications (no "id" field)
-            let Some(msg_id) = obj.get("id") else {
-                continue;
-            };
-
-            // Match numeric id
-            let msg_id_u64 = msg_id.as_u64();
-            let result = obj
-                .get("result")
-                .cloned()
-                .or_else(|| obj.get("error").cloned())
-                .unwrap_or(Value::Null);
-
-            if msg_id_u64 == Some(id) {
-                return Ok(result);
-            }
-
-            // Buffer mismatched responses
-            if let Some(n) = msg_id_u64 {
-                self.pending.insert(n, result);
+            if let MessageKind::Response { id: msg_id, result } = self.read_and_dispatch().await? {
+                if msg_id == id {
+                    return Ok(result);
+                }
+                self.pending.insert(msg_id, result);
             }
         }
+    }
+
+    /// Read one message and classify it, responding to server requests automatically.
+    async fn read_and_dispatch(&mut self) -> Result<MessageKind> {
+        let msg = self.read_message().await?;
+        let obj = match msg {
+            Value::Object(m) => m,
+            _ => return Ok(MessageKind::Other),
+        };
+        let kind = classify_message(&obj);
+        // Respond to server-initiated requests immediately
+        if let MessageKind::ServerRequest { ref id } = kind {
+            let response = json!({"jsonrpc": "2.0", "id": id, "result": null});
+            let _ = self.send(response).await;
+        }
+        Ok(kind)
     }
 
     async fn read_message(&mut self) -> Result<Value> {
@@ -362,4 +462,161 @@ struct SymbolInformationCompat {
 /// Check if an LSP server command is available on PATH.
 pub fn is_available(command: &str) -> bool {
     which::which(command).is_ok()
+}
+
+/// Classification of an incoming JSON-RPC message.
+enum MessageKind {
+    /// A response to one of our requests.
+    Response { id: u64, result: Value },
+    /// A request from the server (e.g. `window/workDoneProgress/create`).
+    ServerRequest { id: Value },
+    /// A `$/progress` begin notification. `title` describes the work item.
+    ProgressBegin { token: Value, title: String },
+    /// A `$/progress` end notification for a token.
+    ProgressEnd { token: Value },
+    /// Any other notification or unrecognised message.
+    Other,
+}
+
+fn classify_message(obj: &serde_json::Map<String, Value>) -> MessageKind {
+    let has_method = obj.contains_key("method");
+    let has_id = obj.contains_key("id");
+
+    match (has_method, has_id) {
+        // Server-initiated request: has both method and id
+        (true, true) => MessageKind::ServerRequest {
+            id: obj["id"].clone(),
+        },
+        // Notification: has method, no id
+        (true, false) => {
+            if obj.get("method").and_then(|m| m.as_str()) != Some("$/progress") {
+                return MessageKind::Other;
+            }
+            let params = obj.get("params");
+            let token = params
+                .and_then(|p| p.get("token"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let value = params.and_then(|p| p.get("value"));
+            let kind = value
+                .and_then(|v| v.get("kind"))
+                .and_then(|k| k.as_str())
+                .unwrap_or("");
+            match kind {
+                "begin" => {
+                    let title = value
+                        .and_then(|v| v.get("title"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    MessageKind::ProgressBegin { token, title }
+                }
+                "end" => MessageKind::ProgressEnd { token },
+                _ => MessageKind::Other,
+            }
+        }
+        // Response: has id, no method
+        (false, true) => {
+            if let Some(id) = obj.get("id").and_then(|v| v.as_u64()) {
+                let result = obj
+                    .get("result")
+                    .cloned()
+                    .or_else(|| obj.get("error").cloned())
+                    .unwrap_or(Value::Null);
+                MessageKind::Response { id, result }
+            } else {
+                MessageKind::Other
+            }
+        }
+        (false, false) => MessageKind::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn progress_notification(kind: &str) -> serde_json::Map<String, Value> {
+        match json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": { "token": "1", "value": { "kind": kind } }
+        }) {
+            Value::Object(m) => m,
+            _ => unreachable!(),
+        }
+    }
+
+    fn server_request(method: &str) -> serde_json::Map<String, Value> {
+        match json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": {} }) {
+            Value::Object(m) => m,
+            _ => unreachable!(),
+        }
+    }
+
+    fn response_msg(id: u64, result: Value) -> serde_json::Map<String, Value> {
+        match json!({ "jsonrpc": "2.0", "id": id, "result": result }) {
+            Value::Object(m) => m,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn indexing_end_classified() {
+        let msg = progress_notification("end");
+        assert!(matches!(
+            classify_message(&msg),
+            MessageKind::ProgressEnd { .. }
+        ));
+    }
+
+    #[test]
+    fn indexing_begin_classified() {
+        let msg = progress_notification("begin");
+        assert!(matches!(
+            classify_message(&msg),
+            MessageKind::ProgressBegin { .. }
+        ));
+    }
+
+    #[test]
+    fn server_request_classified() {
+        let msg = server_request("window/workDoneProgress/create");
+        assert!(matches!(
+            classify_message(&msg),
+            MessageKind::ServerRequest { .. }
+        ));
+    }
+
+    #[test]
+    fn response_classified() {
+        let msg = response_msg(5, json!([1, 2, 3]));
+        assert!(matches!(
+            classify_message(&msg),
+            MessageKind::Response { id: 5, .. }
+        ));
+    }
+
+    #[test]
+    fn report_notification_is_other() {
+        let msg = progress_notification("report");
+        assert!(matches!(classify_message(&msg), MessageKind::Other));
+    }
+
+    #[test]
+    fn progress_begin_title_extracted() {
+        let msg = match json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": { "token": "tok1", "value": { "kind": "begin", "title": "Loading Packages" } }
+        }) {
+            Value::Object(m) => m,
+            _ => unreachable!(),
+        };
+        assert!(matches!(
+            classify_message(&msg),
+            MessageKind::ProgressBegin { title, .. } if title == "Loading Packages"
+        ));
+    }
 }

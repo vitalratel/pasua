@@ -83,10 +83,65 @@ pub fn pr_meta(repo: &Path, number: u64) -> Result<PrMeta> {
     Ok(meta)
 }
 
-/// Get repo remote name, e.g. "owner/repo"
-pub fn remote_name(repo: &Path) -> Result<String> {
+/// Extract the remote name prefix from a ref like "oisee/main" → "oisee".
+/// Returns None if the ref contains no slash.
+fn infer_remote_from_ref(git_ref: &str) -> Option<&str> {
+    let (candidate, _) = git_ref.split_once('/')?;
+    Some(candidate)
+}
+
+/// Parse "owner/repo" from a git remote URL.
+fn parse_remote_from_url(url: &str) -> String {
+    let url = url.trim().trim_end_matches(".git");
+    if let Some(stripped) = url.strip_prefix("https://github.com/") {
+        return stripped.to_string();
+    }
+    // git@github.com:owner/repo
+    if let Some(pos) = url.rfind(':') {
+        return url[pos + 1..].to_string();
+    }
+    url.to_string()
+}
+
+/// List all configured remote names for the repo.
+fn list_remotes(repo: &Path) -> Vec<String> {
     let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
+        .args(["remote"])
+        .current_dir(repo)
+        .output()
+        .unwrap_or_else(|_| std::process::Output {
+            status: std::process::ExitStatus::default(),
+            stdout: vec![],
+            stderr: vec![],
+        });
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Get repo remote name, e.g. "owner/repo".
+///
+/// Uses base/head refs to infer the correct remote when they use "remote/branch" format
+/// (e.g. "oisee/main"). Falls back to "origin" if no remote prefix is detected.
+pub fn remote_name(repo: &Path, base: &str, head: &str) -> Result<String> {
+    let remotes = list_remotes(repo);
+
+    let remote = [base, head]
+        .iter()
+        .find_map(|r| {
+            let candidate = infer_remote_from_ref(r)?;
+            if remotes.contains(&candidate.to_string()) {
+                Some(candidate.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "origin".to_string());
+
+    let output = Command::new("git")
+        .args(["remote", "get-url", &remote])
         .current_dir(repo)
         .output()?;
 
@@ -94,29 +149,54 @@ pub fn remote_name(repo: &Path) -> Result<String> {
         return Ok(String::new());
     }
 
-    let url = String::from_utf8(output.stdout)?.trim().to_string();
-    // Parse "git@github.com:owner/repo.git" or "https://github.com/owner/repo"
-    let name = url
-        .trim_end_matches(".git")
-        .rsplit(':')
-        .next()
-        .or_else(|| {
-            url.rsplit('/')
-                .nth(1)
-                .zip(url.rsplit('/').next())
-                .map(|_| &url[..])
-        })
-        .unwrap_or(&url)
-        .to_string();
+    let url = String::from_utf8(output.stdout)?;
+    Ok(parse_remote_from_url(&url))
+}
 
-    // Simplify to "owner/repo"
-    let name = if let Some(stripped) = name.strip_prefix("https://github.com/") {
-        stripped.to_string()
-    } else if name.contains(':') {
-        name.rsplit(':').next().unwrap_or(&name).to_string()
-    } else {
-        name
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    Ok(name)
+    #[test]
+    fn infer_remote_from_ref_with_slash() {
+        assert_eq!(infer_remote_from_ref("oisee/main"), Some("oisee"));
+    }
+
+    #[test]
+    fn infer_remote_from_ref_without_slash() {
+        assert_eq!(infer_remote_from_ref("main"), None);
+    }
+
+    #[test]
+    fn parse_remote_from_url_ssh() {
+        assert_eq!(
+            parse_remote_from_url("git@github.com:oisee/vibing-steampunk.git"),
+            "oisee/vibing-steampunk"
+        );
+    }
+
+    #[test]
+    fn parse_remote_from_url_https() {
+        assert_eq!(
+            parse_remote_from_url("https://github.com/oisee/vibing-steampunk"),
+            "oisee/vibing-steampunk"
+        );
+    }
+
+    #[test]
+    fn parse_remote_from_url_https_with_git_suffix() {
+        assert_eq!(
+            parse_remote_from_url("https://github.com/oisee/vibing-steampunk.git"),
+            "oisee/vibing-steampunk"
+        );
+    }
+
+    #[test]
+    fn infer_remote_from_ref_multi_segment() {
+        // "oisee/feature/my-branch" → remote is "oisee", not "oisee/feature"
+        assert_eq!(
+            infer_remote_from_ref("oisee/feature/my-branch"),
+            Some("oisee")
+        );
+    }
 }

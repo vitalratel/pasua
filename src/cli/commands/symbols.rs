@@ -20,7 +20,8 @@ pub struct SymbolsArgs {
 }
 
 pub async fn run(args: SymbolsArgs) -> Result<()> {
-    let diffed = pipeline::compute_symbols(&args.repo, &args.base, &args.head, &args.file)?;
+    let diffed =
+        pipeline::symbols_confirmed(&args.repo, &args.base, &args.head, &args.file).await?;
     let output = render::layer2(&args.file, &diffed);
     print!("{output}");
     Ok(())
