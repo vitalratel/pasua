@@ -29,8 +29,8 @@ Language servers are optional but improve accuracy:
 |----------|--------|---------|
 | Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
 | Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
-| Python | `pylsp` | `pip install python-lsp-server` |
-| TypeScript / TSX | `typescript-language-server` | `npm install -g typescript-language-server typescript` |
+| Python | `pylsp` | `uv tool install python-lsp-server` |
+| TypeScript / TSX | `typescript-language-server` | `pnpm add -g typescript-language-server typescript` |
 | Elixir | `elixir-ls` | See [elixir-ls releases](https://github.com/elixir-lsp/elixir-ls/releases) |
 | Gleam | built-in | `gleam lsp` (ships with the Gleam toolchain) |
 
