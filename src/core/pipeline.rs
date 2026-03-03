@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use tokio::time::Duration;
 
 use crate::core::cache::Cache;
+use crate::core::config::Config;
 use crate::core::diff::{DiffedSymbol, diff_symbols};
 use crate::core::git::{self, FileStat, GitStatus};
 use crate::core::lsp_confirmation::apply_lsp_confirmation;
@@ -67,13 +68,6 @@ pub struct DiffResult {
     pub files: Vec<FileDiff>,
 }
 
-/// Default LSP request timeout.
-const LSP_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long to wait for the LSP server's initial indexing pass to complete.
-/// Non-fatal: if gopls has a warm cache and sends no loading progress, this
-/// timeout fires and we proceed with whatever symbols are available.
-const LSP_INDEXING_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Whether a file should have its symbols computed.
 fn needs_expand(fd: &FileDiff, expand: bool, depth_symbols: bool, threshold: usize) -> bool {
     expand
@@ -98,6 +92,7 @@ pub async fn run(
     threshold: usize,
     depth_symbols: bool,
     expand: bool,
+    config: &Config,
 ) -> Result<DiffResult> {
     // Resolve symbolic refs to SHAs so cache keys are stable across commits.
     let base_sha = git::resolve_ref(repo, base)?;
@@ -136,7 +131,7 @@ pub async fn run(
 
     // LSP confirmation: try to upgrade ? → ! for each analyzed file.
     // Best-effort — falls back to heuristic output on timeout or unavailable server.
-    if let Err(e) = confirm_with_lsp(repo, head, &mut file_diffs).await {
+    if let Err(e) = confirm_with_lsp(repo, head, &mut file_diffs, config).await {
         tracing::debug!("LSP confirmation skipped: {e}");
     }
 
@@ -186,17 +181,19 @@ fn build_lsp_groups(
 async fn start_lsp(
     wt_path: &Path,
     lang: &dyn crate::languages::LanguageSupport,
+    config: &Config,
 ) -> Result<semantic::LspClient> {
     lang.check_readiness(wt_path)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let indexing_timeout = config.lsp_indexing_timeout_for(lang.lsp_language_id());
     let mut client = semantic::LspClient::spawn(
         lang.lsp_command(),
         wt_path,
         lang.lsp_init_options(),
-        LSP_TIMEOUT,
+        config.lsp_timeout,
     )
     .await?;
-    if let Err(e) = client.wait_for_indexing(LSP_INDEXING_TIMEOUT).await {
+    if let Err(e) = client.wait_for_indexing(indexing_timeout).await {
         tracing::debug!("LSP indexing wait failed: {e}");
     }
     Ok(client)
@@ -206,7 +203,12 @@ async fn start_lsp(
 ///
 /// Creates one worktree at `head`, then spawns one LSP session per language family
 /// present in the diff. Files of unsupported or unavailable languages are skipped.
-async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) -> Result<()> {
+async fn confirm_with_lsp(
+    repo: &Path,
+    head: &str,
+    file_diffs: &mut [FileDiff],
+    config: &Config,
+) -> Result<()> {
     let groups: Vec<_> = build_lsp_groups(file_diffs)
         .into_iter()
         .filter(|(lang, _)| semantic::is_available(lang.lsp_command()[0]))
@@ -222,7 +224,7 @@ async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) 
 
     for (lang, indices) in groups {
         tracing::info!("starting {} for LSP confirmation...", lang.lsp_command()[0]);
-        let mut client = match start_lsp(&wt_path, &*lang).await {
+        let mut client = match start_lsp(&wt_path, &*lang, config).await {
             Ok(c) => c,
             Err(e) => {
                 tracing::debug!("Failed to start {}: {e}", lang.lsp_command()[0]);
@@ -233,8 +235,14 @@ async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) 
         for idx in indices {
             let fd = &mut file_diffs[idx];
             let file_path = wt_path.join(&fd.path);
-            if let Some(lsp_syms) =
-                query_lsp_symbols(&mut client, &file_path, lang.lsp_language_id(), &fd.path).await
+            if let Some(lsp_syms) = query_lsp_symbols(
+                &mut client,
+                &file_path,
+                lang.lsp_language_id(),
+                &fd.path,
+                config.lsp_timeout,
+            )
+            .await
             {
                 fd.confirmed = true;
                 if let Some(syms) = &mut fd.symbols {
@@ -243,7 +251,7 @@ async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) 
             }
         }
 
-        let _ = client.shutdown(LSP_TIMEOUT).await;
+        let _ = client.shutdown(config.lsp_timeout).await;
         tracing::info!("{} confirmation complete", lang.lsp_command()[0]);
     }
 
@@ -401,9 +409,10 @@ pub async fn symbols_confirmed(
     base: &str,
     head: &str,
     path: &str,
+    config: &Config,
 ) -> Result<Vec<DiffedSymbol>> {
     let mut syms = compute_symbols(repo, base, head, path)?;
-    if let Err(e) = confirm_single_file(repo, head, path, &mut syms).await {
+    if let Err(e) = confirm_single_file(repo, head, path, &mut syms, config).await {
         tracing::debug!("LSP confirmation skipped for {path}: {e}");
     }
     Ok(syms)
@@ -415,6 +424,7 @@ async fn confirm_single_file(
     head: &str,
     path: &str,
     syms: &mut [DiffedSymbol],
+    config: &Config,
 ) -> Result<()> {
     let ext = std::path::Path::new(path)
         .extension()
@@ -428,15 +438,21 @@ async fn confirm_single_file(
     let wt = worktree::Worktree::create(repo, head)?;
     let wt_path = wt.path().to_path_buf();
 
-    let mut client = start_lsp(&wt_path, &*lang).await?;
+    let mut client = start_lsp(&wt_path, &*lang, config).await?;
     let file_path = wt_path.join(path);
-    if let Some(lsp_syms) =
-        query_lsp_symbols(&mut client, &file_path, lang.lsp_language_id(), path).await
+    if let Some(lsp_syms) = query_lsp_symbols(
+        &mut client,
+        &file_path,
+        lang.lsp_language_id(),
+        path,
+        config.lsp_timeout,
+    )
+    .await
     {
         apply_lsp_confirmation(&lsp_syms, syms);
     }
 
-    let _ = client.shutdown(LSP_TIMEOUT).await;
+    let _ = client.shutdown(config.lsp_timeout).await;
     Ok(())
 }
 
@@ -465,6 +481,7 @@ async fn query_lsp_symbols(
     file_path: &std::path::Path,
     language_id: &str,
     log_path: &str,
+    timeout: Duration,
 ) -> Option<Vec<semantic::LspSymbol>> {
     if !file_path.exists() {
         return None;
@@ -474,7 +491,7 @@ async fn query_lsp_symbols(
         tracing::debug!("LSP open_file failed for {log_path}: {e}");
         return None;
     }
-    match client.document_symbols(file_path, LSP_TIMEOUT).await {
+    match client.document_symbols(file_path, timeout).await {
         Ok(syms) => {
             tracing::debug!(
                 "LSP symbols for {log_path}: count={}, names=[{}]",

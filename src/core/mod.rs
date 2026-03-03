@@ -2,6 +2,7 @@
 // ABOUTME: Modules: git, github, skeletal, semantic, cache, diff, hunk, render, lsp_confirmation.
 
 pub mod cache;
+pub mod config;
 pub mod diff;
 pub mod git;
 pub mod github;

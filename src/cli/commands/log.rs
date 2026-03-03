@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::core::{git, pipeline, render};
+use crate::core::{config, git, pipeline, render};
 
 #[derive(Args, Debug)]
 pub struct LogArgs {
@@ -13,18 +13,20 @@ pub struct LogArgs {
     pub repo: PathBuf,
     /// Commit range, e.g. main..feature
     pub range: String,
-    /// Line delta threshold for auto-expanding a file's symbols
-    #[arg(long, default_value = "200")]
-    pub threshold: usize,
+    /// Line delta threshold for auto-expanding a file's symbols [env: PASUA_THRESHOLD]
+    #[arg(long)]
+    pub threshold: Option<usize>,
 }
 
 pub async fn run(args: LogArgs) -> Result<()> {
     let repo = &args.repo;
+    let cfg = config::Config::load();
+    let threshold = args.threshold.unwrap_or(cfg.threshold);
     let commits = git::list_commits(repo, &args.range)?;
 
     for (sha, subject) in &commits {
         let parent = format!("{sha}^");
-        let result = pipeline::run(repo, &parent, sha, args.threshold, false, true).await?;
+        let result = pipeline::run(repo, &parent, sha, threshold, false, true, &cfg).await?;
 
         println!("{}", render::log_entry(sha, subject, &result));
 

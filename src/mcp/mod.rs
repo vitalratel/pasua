@@ -13,12 +13,13 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::core::{git, github, hunk, pipeline, render};
+use crate::core::{config, git, github, hunk, pipeline, render};
 
 /// MCP server for pasua operations.
 #[derive(Clone)]
 pub struct PasuaServer {
     tool_router: ToolRouter<Self>,
+    config: config::Config,
 }
 
 /// Parameters for all pasua operations.
@@ -64,6 +65,7 @@ impl PasuaServer {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
+            config: config::Config::load(),
         }
     }
 
@@ -114,13 +116,13 @@ impl ServerHandler for PasuaServer {
 impl PasuaServer {
     async fn execute(&self, params: PasuaParams) -> Result<String, String> {
         let repo = PathBuf::from(&params.repo);
-        let threshold = params.threshold.unwrap_or(200);
+        let threshold = params.threshold.unwrap_or(self.config.threshold);
 
         match params.action.as_str() {
             "diff" => {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
-                let result = pipeline::run(&repo, base, head, threshold, false, true)
+                let result = pipeline::run(&repo, base, head, threshold, false, true, &self.config)
                     .await
                     .map_err(|e| e.to_string())?;
                 let repo_label =
@@ -130,9 +132,10 @@ impl PasuaServer {
             "summary" => {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
-                let result = pipeline::run(&repo, base, head, threshold, false, false)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let result =
+                    pipeline::run(&repo, base, head, threshold, false, false, &self.config)
+                        .await
+                        .map_err(|e| e.to_string())?;
                 let repo_label =
                     github::remote_name(&repo, base, head).unwrap_or_else(|_| params.repo.clone());
                 Ok(render::layer1(&result, &repo_label, base, head))
@@ -141,7 +144,7 @@ impl PasuaServer {
                 let base = require(&params.base, "base")?;
                 let head = require(&params.head, "head")?;
                 let file = require(&params.file, "file")?;
-                let diffed = pipeline::symbols_confirmed(&repo, base, head, file)
+                let diffed = pipeline::symbols_confirmed(&repo, base, head, file, &self.config)
                     .await
                     .map_err(|e| e.to_string())?;
                 Ok(render::layer2(file, &diffed))
@@ -158,7 +161,7 @@ impl PasuaServer {
                 let meta = github::pr_meta(&repo, pr_number).map_err(|e| e.to_string())?;
                 let base = &meta.base_ref_name;
                 let head = &meta.head_ref_name;
-                let result = pipeline::run(&repo, base, head, threshold, false, true)
+                let result = pipeline::run(&repo, base, head, threshold, false, true, &self.config)
                     .await
                     .map_err(|e| e.to_string())?;
                 let repo_label =
@@ -182,9 +185,10 @@ impl PasuaServer {
                 let mut out = String::new();
                 for (sha, subject) in &commits {
                     let parent = format!("{sha}^");
-                    let result = pipeline::run(&repo, &parent, sha, threshold, false, true)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    let result =
+                        pipeline::run(&repo, &parent, sha, threshold, false, true, &self.config)
+                            .await
+                            .map_err(|e| e.to_string())?;
                     out.push_str(&format!("{}\n", render::log_entry(sha, subject, &result)));
                     for file in &result.files {
                         out.push_str(&format!("  {}\n", render::file_line_only(file)));
