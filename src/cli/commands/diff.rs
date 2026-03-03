@@ -27,7 +27,8 @@ pub async fn run(args: DiffArgs) -> Result<()> {
     let repo = &args.repo;
     let depth_symbols = args.depth.as_deref() == Some("symbols");
     let result = pipeline::run(repo, &args.base, &args.head, args.threshold, depth_symbols).await?;
-    let repo_label = github::remote_name(repo).unwrap_or_else(|_| repo.display().to_string());
+    let repo_label = github::remote_name(repo, &args.base, &args.head)
+        .unwrap_or_else(|_| repo.display().to_string());
     let output = render::layer1(&result, &repo_label, &args.base, &args.head);
     print!("{output}");
     Ok(())

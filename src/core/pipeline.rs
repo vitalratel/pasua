@@ -8,7 +8,9 @@ use anyhow::{Context, Result};
 use tokio::time::Duration;
 
 use crate::core::cache::Cache;
+use crate::core::diff::{DiffedSymbol, diff_symbols};
 use crate::core::git::{self, FileStat, GitStatus};
+use crate::core::lsp_confirmation::apply_lsp_confirmation;
 use crate::core::skeletal;
 use crate::core::{semantic, worktree};
 use crate::languages::{Symbol, registry};
@@ -45,7 +47,7 @@ pub struct FileDiff {
     pub added: usize,
     pub removed: usize,
     /// Layer 2 symbols, if computed (None = not yet fetched)
-    pub symbols: Option<Vec<crate::core::diff::DiffedSymbol>>,
+    pub symbols: Option<Vec<DiffedSymbol>>,
     /// LSP confirmed (true) or heuristic (false)
     pub confirmed: bool,
 }
@@ -65,8 +67,12 @@ pub struct DiffResult {
     pub files: Vec<FileDiff>,
 }
 
-/// Default LSP timeout.
+/// Default LSP request timeout.
 const LSP_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long to wait for the LSP server's initial indexing pass to complete.
+/// Non-fatal: if gopls has a warm cache and sends no loading progress, this
+/// timeout fires and we proceed with whatever symbols are available.
+const LSP_INDEXING_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Run the full Layer 1 pipeline.
 ///
@@ -141,111 +147,98 @@ pub async fn run(
     })
 }
 
-/// Try LSP confirmation for all files in file_diffs.
+/// Group file diff indices by LSP command, in order of first appearance.
 ///
-/// Creates a worktree at `head`, starts the language server, and uses
-/// `textDocument/documentSymbol` to verify which symbols exist in each file.
-/// Updates `confirmed = true` where the LSP agrees with the heuristic result.
-async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) -> Result<()> {
-    // Determine which file extensions are present and have a supported language
-    let extensions: Vec<&str> = file_diffs
-        .iter()
-        .filter_map(|fd| {
-            std::path::Path::new(&fd.path)
-                .extension()
-                .and_then(|e| e.to_str())
-        })
-        .collect();
-
-    // Pick the first supported language with an available LSP server
-    let lang = extensions.iter().find_map(|ext| {
-        let lang = registry::for_extension(ext)?;
+/// Files with unsupported extensions are skipped. Does not filter by availability —
+/// callers decide whether to require the binary to be present.
+fn build_lsp_groups(
+    file_diffs: &[FileDiff],
+) -> Vec<(Box<dyn crate::languages::LanguageSupport>, Vec<usize>)> {
+    let mut groups: Vec<(Box<dyn crate::languages::LanguageSupport>, Vec<usize>)> = Vec::new();
+    for (i, fd) in file_diffs.iter().enumerate() {
+        let Some(ext) = std::path::Path::new(&fd.path)
+            .extension()
+            .and_then(|e| e.to_str())
+        else {
+            continue;
+        };
+        let Some(lang) = registry::for_extension(ext) else {
+            continue;
+        };
         let cmd = lang.lsp_command()[0];
-        if semantic::is_available(cmd) {
-            Some(lang)
+        if let Some(group) = groups.iter_mut().find(|(l, _)| l.lsp_command()[0] == cmd) {
+            group.1.push(i);
         } else {
-            None
+            groups.push((lang, vec![i]));
         }
-    });
-
-    let Some(lang) = lang else {
-        return Ok(()); // No supported LSP available
-    };
-
-    tracing::info!("starting {} for LSP confirmation...", lang.lsp_command()[0]);
-
-    // Create a worktree at head for LSP to index
-    let wt = worktree::Worktree::create(repo, head)?;
-    let wt_path = wt.path().to_path_buf();
-
-    if let Err(e) = lang.check_readiness(&wt_path) {
-        tracing::debug!(
-            "LSP readiness check failed for {}: {e}",
-            lang.lsp_command()[0]
-        );
-        return Ok(());
     }
+    groups
+}
 
+/// Spawn an LSP server for a worktree, wait for initial indexing, and return the client.
+async fn start_lsp(
+    wt_path: &Path,
+    lang: &dyn crate::languages::LanguageSupport,
+) -> Result<semantic::LspClient> {
+    lang.check_readiness(wt_path)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut client = semantic::LspClient::spawn(
         lang.lsp_command(),
-        &wt_path,
+        wt_path,
         lang.lsp_init_options(),
         LSP_TIMEOUT,
     )
-    .await
-    .with_context(|| format!("Failed to start {}", lang.lsp_command()[0]))?;
+    .await?;
+    if let Err(e) = client.wait_for_indexing(LSP_INDEXING_TIMEOUT).await {
+        tracing::debug!("LSP indexing wait failed: {e}");
+    }
+    Ok(client)
+}
 
-    tracing::info!("LSP server ready, confirming symbols...");
+/// Try LSP confirmation for all files in file_diffs.
+///
+/// Creates one worktree at `head`, then spawns one LSP session per language family
+/// present in the diff. Files of unsupported or unavailable languages are skipped.
+async fn confirm_with_lsp(repo: &Path, head: &str, file_diffs: &mut [FileDiff]) -> Result<()> {
+    let groups: Vec<_> = build_lsp_groups(file_diffs)
+        .into_iter()
+        .filter(|(lang, _)| semantic::is_available(lang.lsp_command()[0]))
+        .collect();
 
-    // For each file that has symbols or is part of a split, verify via LSP
-    for fd in file_diffs.iter_mut() {
-        let file_path = wt_path.join(&fd.path);
-        if !file_path.exists() {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        if let Err(e) = client
-            .open_file(&file_path, &content, lang.lsp_language_id())
-            .await
-        {
-            tracing::debug!("LSP open_file failed for {}: {e}", fd.path);
-            continue;
-        }
-
-        match client.document_symbols(&file_path, LSP_TIMEOUT).await {
-            Ok(lsp_syms) => {
-                // Confirm file-level entry
-                fd.confirmed = true;
-
-                // Confirm individual symbols by name + kind match; capture LSP range
-                if let Some(syms) = &mut fd.symbols {
-                    for sym in syms.iter_mut() {
-                        if let Some(ls) = lsp_syms
-                            .iter()
-                            .find(|ls| ls.name == sym.name && lsp_kind_matches(ls.kind, sym.kind))
-                        {
-                            sym.confirmed = true;
-                            sym.lsp_range = Some((
-                                ls.range.start.line as usize + 1,
-                                ls.range.end.line as usize + 1,
-                            ));
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::debug!("LSP documentSymbol failed for {}: {e}", fd.path);
-            }
-        }
+    if groups.is_empty() {
+        return Ok(());
     }
 
-    let _ = client.shutdown(LSP_TIMEOUT).await;
-    tracing::info!("LSP confirmation complete");
+    // One worktree for all language servers — creation is the expensive part.
+    let wt = worktree::Worktree::create(repo, head)?;
+    let wt_path = wt.path().to_path_buf();
+
+    for (lang, indices) in groups {
+        tracing::info!("starting {} for LSP confirmation...", lang.lsp_command()[0]);
+        let mut client = match start_lsp(&wt_path, &*lang).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!("Failed to start {}: {e}", lang.lsp_command()[0]);
+                continue;
+            }
+        };
+
+        for idx in indices {
+            let fd = &mut file_diffs[idx];
+            let file_path = wt_path.join(&fd.path);
+            if let Some(lsp_syms) =
+                query_lsp_symbols(&mut client, &file_path, lang.lsp_language_id(), &fd.path).await
+            {
+                fd.confirmed = true;
+                if let Some(syms) = &mut fd.symbols {
+                    apply_lsp_confirmation(&lsp_syms, syms);
+                }
+            }
+        }
+
+        let _ = client.shutdown(LSP_TIMEOUT).await;
+        tracing::info!("{} confirmation complete", lang.lsp_command()[0]);
+    }
 
     Ok(())
 }
@@ -300,6 +293,24 @@ fn extract_cached(
     Some(syms)
 }
 
+/// Extract and cache symbols for a set of files at a given ref.
+fn build_symbol_map(
+    cache: &mut Cache,
+    repo: &Path,
+    git_ref: &str,
+    stats: &[&FileStat],
+) -> HashMap<String, Vec<Symbol>> {
+    let mut map = HashMap::new();
+    for s in stats {
+        if let Some(syms) = extract_cached(cache, repo, git_ref, &s.path)
+            && !syms.is_empty()
+        {
+            map.insert(s.path.clone(), syms);
+        }
+    }
+    map
+}
+
 /// Heuristic split detection: if a deleted/large-shrunken file's symbols appear
 /// in newly added files, mark the old file as Split and annotate the new files.
 fn detect_splits(
@@ -332,23 +343,8 @@ fn detect_splits(
     }
 
     // Extract symbols from source files (at base) and target files (at head)
-    let mut source_symbols: HashMap<String, Vec<Symbol>> = HashMap::new();
-    for s in &sources {
-        if let Some(syms) = extract_cached(cache, repo, base, &s.path)
-            && !syms.is_empty()
-        {
-            source_symbols.insert(s.path.clone(), syms);
-        }
-    }
-
-    let mut target_symbols: HashMap<String, Vec<Symbol>> = HashMap::new();
-    for t in &targets {
-        if let Some(syms) = extract_cached(cache, repo, head, &t.path)
-            && !syms.is_empty()
-        {
-            target_symbols.insert(t.path.clone(), syms);
-        }
-    }
+    let source_symbols = build_symbol_map(cache, repo, base, &sources);
+    let target_symbols = build_symbol_map(cache, repo, head, &targets);
 
     // For each source, check symbol overlap with each target
     for (src_path, src_syms) in &source_symbols {
@@ -389,13 +385,61 @@ fn detect_splits(
     Ok(())
 }
 
+/// Compute Layer 2 symbols for a file with LSP confirmation.
+///
+/// Equivalent to `compute_symbols` followed by a best-effort LSP confirmation pass.
+/// Falls back silently to heuristic results if no LSP is available.
+pub async fn symbols_confirmed(
+    repo: &Path,
+    base: &str,
+    head: &str,
+    path: &str,
+) -> Result<Vec<DiffedSymbol>> {
+    let mut syms = compute_symbols(repo, base, head, path)?;
+    if let Err(e) = confirm_single_file(repo, head, path, &mut syms).await {
+        tracing::debug!("LSP confirmation skipped for {path}: {e}");
+    }
+    Ok(syms)
+}
+
+/// Run LSP confirmation for a single file's symbol list.
+async fn confirm_single_file(
+    repo: &Path,
+    head: &str,
+    path: &str,
+    syms: &mut [DiffedSymbol],
+) -> Result<()> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .context("no file extension")?;
+
+    let lang = registry::for_extension(ext).context("unsupported extension")?;
+    let cmd = lang.lsp_command()[0];
+    anyhow::ensure!(semantic::is_available(cmd), "{cmd} not available");
+
+    let wt = worktree::Worktree::create(repo, head)?;
+    let wt_path = wt.path().to_path_buf();
+
+    let mut client = start_lsp(&wt_path, &*lang).await?;
+    let file_path = wt_path.join(path);
+    if let Some(lsp_syms) =
+        query_lsp_symbols(&mut client, &file_path, lang.lsp_language_id(), path).await
+    {
+        apply_lsp_confirmation(&lsp_syms, syms);
+    }
+
+    let _ = client.shutdown(LSP_TIMEOUT).await;
+    Ok(())
+}
+
 /// Compute Layer 2 symbols for a file.
 pub fn compute_symbols(
     repo: &Path,
     base: &str,
     head: &str,
     path: &str,
-) -> Result<Vec<crate::core::diff::DiffedSymbol>> {
+) -> Result<Vec<DiffedSymbol>> {
     let base_bytes = git::file_at(repo, base, path)?.unwrap_or_default();
     let head_bytes = git::file_at(repo, head, path)?.unwrap_or_default();
 
@@ -405,25 +449,80 @@ pub fn compute_symbols(
     let base_map = HashMap::from([(path.to_string(), base_syms)]);
     let head_map = HashMap::from([(path.to_string(), head_syms)]);
 
-    Ok(crate::core::diff::diff_symbols(&base_map, &head_map))
+    Ok(diff_symbols(&base_map, &head_map))
 }
 
-/// Match an LSP symbol kind against our language-agnostic SymbolKind.
-///
-/// LSP SymbolKind has ~26 values; we map them to our 8 semantic categories.
-/// Intentionally permissive: a match on name alone without kind disagreement is
-/// better than a false negative from an overly strict kind check.
-fn lsp_kind_matches(lsp: lsp_types::SymbolKind, ours: crate::languages::SymbolKind) -> bool {
-    use crate::languages::SymbolKind as S;
-    use lsp_types::SymbolKind as L;
-    match ours {
-        S::Fn => matches!(lsp, L::FUNCTION | L::METHOD | L::CONSTRUCTOR),
-        S::Ty => matches!(lsp, L::CLASS | L::STRUCT | L::OBJECT | L::TYPE_PARAMETER),
-        S::If => matches!(lsp, L::INTERFACE),
-        S::En => matches!(lsp, L::ENUM | L::ENUM_MEMBER),
-        S::Co => matches!(lsp, L::CONSTANT | L::VARIABLE | L::FIELD | L::PROPERTY),
-        S::Mo => matches!(lsp, L::MODULE | L::NAMESPACE | L::PACKAGE),
-        S::Im => matches!(lsp, L::CLASS | L::OBJECT | L::MODULE),
-        S::Ma => matches!(lsp, L::FUNCTION | L::OPERATOR),
+/// Open a file in the LSP and return its document symbols. Returns None on any error.
+async fn query_lsp_symbols(
+    client: &mut semantic::LspClient,
+    file_path: &std::path::Path,
+    language_id: &str,
+    log_path: &str,
+) -> Option<Vec<semantic::LspSymbol>> {
+    if !file_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(file_path).ok()?;
+    if let Err(e) = client.open_file(file_path, &content, language_id).await {
+        tracing::debug!("LSP open_file failed for {log_path}: {e}");
+        return None;
+    }
+    match client.document_symbols(file_path, LSP_TIMEOUT).await {
+        Ok(syms) => {
+            tracing::debug!(
+                "LSP symbols for {log_path}: count={}, names=[{}]",
+                syms.len(),
+                syms.iter()
+                    .map(|s| format!("{:?}:{}", s.kind, s.name))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            Some(syms)
+        }
+        Err(e) => {
+            tracing::debug!("LSP documentSymbol failed for {log_path}: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lang_groups_are_distinct_per_lsp_command() {
+        // Two Go files should share one group; one Rust file gets its own group.
+        let file_diffs = vec![
+            FileDiff {
+                status: FileStatus::Modified,
+                path: "main.go".to_string(),
+                added: 10,
+                removed: 5,
+                symbols: None,
+                confirmed: false,
+            },
+            FileDiff {
+                status: FileStatus::Modified,
+                path: "lib.go".to_string(),
+                added: 3,
+                removed: 1,
+                symbols: None,
+                confirmed: false,
+            },
+            FileDiff {
+                status: FileStatus::Modified,
+                path: "src/lib.rs".to_string(),
+                added: 7,
+                removed: 2,
+                symbols: None,
+                confirmed: false,
+            },
+        ];
+
+        let groups = build_lsp_groups(&file_diffs);
+        assert_eq!(groups.len(), 2, "Go and Rust should form two groups");
+        assert_eq!(groups[0].1, vec![0, 1], "both Go files in first group");
+        assert_eq!(groups[1].1, vec![2], "Rust file in second group");
     }
 }

@@ -26,7 +26,8 @@ pub async fn run(args: PrArgs) -> Result<()> {
     let head = &meta.head_ref_name;
 
     let result = pipeline::run(repo, base, head, args.threshold, false).await?;
-    let repo_label = github::remote_name(repo).unwrap_or_else(|_| repo.display().to_string());
+    let repo_label =
+        github::remote_name(repo, base, head).unwrap_or_else(|_| repo.display().to_string());
     let diff_output = render::layer1(&result, &repo_label, base, head);
 
     let ci_status = meta.ci_status();
