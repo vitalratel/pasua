@@ -1,8 +1,13 @@
 // ABOUTME: Language support trait and symbol types.
 // ABOUTME: Each language implements LanguageSupport; registry maps extension → impl.
 
+pub mod elixir;
+pub mod gleam;
 pub mod go;
+pub mod python;
 pub mod registry;
+pub mod rust;
+pub mod typescript;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,10 +57,25 @@ pub trait LanguageSupport: Send + Sync {
     fn lsp_init_options(&self) -> Value {
         serde_json::json!({})
     }
-    /// Map tree-sitter node kind string to SymbolKind.
-    fn symbol_kind(&self, node_kind: &str) -> Option<SymbolKind>;
+    /// Map a tree-sitter node to SymbolKind. Receives the full node and source
+    /// so implementations that need content-based discrimination (e.g. Elixir)
+    /// can inspect child text rather than just the node type.
+    fn symbol_kind(&self, node: tree_sitter::Node<'_>, source: &[u8]) -> Option<SymbolKind>;
     /// LSP language identifier string, e.g. "go", "rust".
     fn lsp_language_id(&self) -> &'static str;
-    /// Check that required tooling is present (e.g. go.mod exists).
-    fn check_readiness(&self, path: &Path) -> Result<(), String>;
+    /// Files whose presence confirms this is the right project type (any one suffices).
+    fn project_files(&self) -> &[&str];
+    /// Check that required project file is present. Uses project_files() by default.
+    fn check_readiness(&self, path: &Path) -> Result<(), String> {
+        let files = self.project_files();
+        if files.iter().any(|f| path.join(f).exists()) {
+            Ok(())
+        } else {
+            Err(format!(
+                "None of {} found in {}.",
+                files.join(", "),
+                path.display()
+            ))
+        }
+    }
 }

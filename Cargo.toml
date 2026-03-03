@@ -2,6 +2,9 @@
 name = "pasua"
 version = "0.1.0"
 edition = "2024"
+description = "Semantic code diff for AI agents"
+repository = "https://github.com/vitalratel/pasua"
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0.102"
@@ -19,7 +22,12 @@ tokio = { version = "1.49.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tree-sitter = "0.26.6"
+tree-sitter-elixir = "0.3"
+tree-sitter-gleam = "1.0"
 tree-sitter-go = "0.25.0"
+tree-sitter-python = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
 twox-hash = { version = "2.1.2", default-features = false, features = ["xxhash64"] }
 which = "8.0.0"
 

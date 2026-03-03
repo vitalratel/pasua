@@ -36,12 +36,12 @@ pub fn extract(path: &str, source: &[u8]) -> Result<Vec<Symbol>> {
         let name_cap = m.captures.iter().find(|c| c.index == name_idx);
 
         if let (Some(outer), Some(name_cap)) = (outer, name_cap) {
+            let Some(kind) = lang.symbol_kind(outer, source) else {
+                continue;
+            };
             let name = name_cap.node.utf8_text(source)?.to_string();
             let body: &str = outer.utf8_text(source).unwrap_or("");
             let body_hash = twox_hash::XxHash64::oneshot(0, body.as_bytes());
-            let kind = lang
-                .symbol_kind(outer.kind())
-                .unwrap_or(crate::languages::SymbolKind::Fn);
 
             symbols.push(Symbol {
                 name,

@@ -8,3 +8,4 @@
 # Docs / local config
 *.md
 !README.md
+!CHANGELOG.md
