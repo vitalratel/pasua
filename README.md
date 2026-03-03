@@ -37,25 +37,28 @@ Language servers are optional but improve accuracy:
 ## CLI Usage
 
 ```bash
-# Layer 1 overview (+ auto Layer 2 for splits and large files)
+# File-level overview; auto-expands large and split files
 pasua diff <repo> <base> <head>
 
-# Force Layer 2 for all files
+# File-level overview only; no symbol expansion
+pasua diff <repo> <base> <head> --depth=none
+
+# Force symbol listing for all files
 pasua diff <repo> <base> <head> --depth=symbols
 
-# Override auto-include threshold (default: 200 lines)
+# Override auto-expand threshold (default: 200 lines)
 pasua diff <repo> <base> <head> --threshold=100
 
-# Layer 2 — symbol table for one file
+# Changed symbols in one file
 pasua symbols <repo> <base> <head> <file>
 
-# Layer 3 — scoped hunk for one symbol
+# Exact diff for one symbol
 pasua hunk <repo> <base> <head> <file> <symbol>
 
-# PR envelope + Layer 1
+# PR metadata (title, CI status, reviews) with file-level diff
 pasua pr <repo> <pr-number>
 
-# Per-commit mini-overview for a range
+# File-level overview for each commit in a range
 pasua log <repo> <base>..<head>
 
 # Start MCP server
@@ -96,11 +99,12 @@ The server exposes a single `pasua` tool with operations:
 
 | Action | Description |
 |--------|-------------|
-| `diff` | Layer 1 overview with auto Layer 2 for splits and large files |
-| `symbols` | Layer 2 symbol table for a single file |
-| `hunk` | Layer 3 scoped diff for a single symbol |
-| `pr` | PR envelope with CI status and reviews |
-| `log` | Per-commit mini-overview for a commit range |
+| `summary` | File-level overview only; no symbol expansion |
+| `diff` | File-level overview; auto-expands large and split files |
+| `symbols` | Changed symbols for a single file |
+| `hunk` | Exact diff for a single symbol |
+| `pr` | PR metadata (title, CI status, reviews) with file-level diff |
+| `log` | File-level overview for each commit in a range |
 
 ### Typical agent workflow
 

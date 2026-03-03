@@ -45,8 +45,7 @@ pub fn file_line_only(file: &FileDiff) -> String {
 /// One-line commit summary for the log command.
 pub fn log_entry(sha: &str, subject: &str, result: &DiffResult) -> String {
     format!(
-        "{} \"{}\"  +{}/−{}  {}f",
-        &sha[..7],
+        "{sha} \"{}\"  +{}/−{}  {}f",
         subject,
         result.summary.total_added,
         result.summary.total_removed,
@@ -92,8 +91,18 @@ fn render_file_line(file: &FileDiff) -> String {
 fn render_symbol_line(sym: &DiffedSymbol) -> String {
     let status = render_symbol_status(&sym.status);
     let conf = if sym.confirmed { "!" } else { "?" };
+    // Show line count for the relevant ref when the symbol is large enough to matter
+    let lines = match sym.status {
+        SymbolStatus::Removed => sym.base_lines,
+        _ => sym.head_lines,
+    };
+    let size = if lines >= 10 {
+        format!("  {lines}l")
+    } else {
+        String::new()
+    };
     format!(
-        "  {:<2}  {:<24} {:<28} {conf}",
+        "  {:<2}  {:<24} {:<28} {conf}{size}",
         kind_sigil(sym.kind),
         sym.name,
         status
@@ -284,6 +293,8 @@ mod tests {
                 status: SymbolStatus::Modified,
                 confirmed: false,
                 lsp_range: None,
+                head_lines: 5,
+                base_lines: 5,
             },
             DiffedSymbol {
                 name: "Bar".into(),
@@ -292,11 +303,45 @@ mod tests {
                 status: SymbolStatus::Unchanged,
                 confirmed: false,
                 lsp_range: None,
+                head_lines: 3,
+                base_lines: 3,
             },
         ];
         let out = layer2("a.go", &syms);
         assert!(out.contains("Foo"));
         assert!(!out.contains("Bar"));
+    }
+
+    #[test]
+    fn symbol_line_count_shown_for_large_symbols() {
+        let syms = vec![
+            DiffedSymbol {
+                name: "BigFn".into(),
+                file: "a.go".into(),
+                kind: SymbolKind::Fn,
+                status: SymbolStatus::Modified,
+                confirmed: false,
+                lsp_range: None,
+                head_lines: 80,
+                base_lines: 50,
+            },
+            DiffedSymbol {
+                name: "TinyFn".into(),
+                file: "a.go".into(),
+                kind: SymbolKind::Fn,
+                status: SymbolStatus::Modified,
+                confirmed: false,
+                lsp_range: None,
+                head_lines: 3,
+                base_lines: 3,
+            },
+        ];
+        let out = layer2("a.go", &syms);
+        assert!(out.contains("80l"), "large symbol should show line count");
+        assert!(
+            !out.contains("3l"),
+            "small symbol should not show line count"
+        );
     }
 
     #[test]
@@ -332,5 +377,16 @@ mod tests {
         ];
         let out = pr_envelope(7, "Rework", "", "MERGED", None, &reviews, "diff");
         assert!(out.starts_with("PR#7 \"Rework\" [merged] [reviews:1✓1✗]"));
+    }
+
+    #[test]
+    fn log_entry_uses_full_sha() {
+        let result = make_result(vec![]);
+        let sha = "abc1234567890def1234567890abcdef12345678";
+        let out = log_entry(sha, "do a thing", &result);
+        assert!(
+            out.starts_with(sha),
+            "log entry must use full SHA, got: {out}"
+        );
     }
 }

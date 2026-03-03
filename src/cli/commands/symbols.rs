@@ -11,9 +11,9 @@ use crate::core::{pipeline, render};
 pub struct SymbolsArgs {
     /// Path to local repository clone
     pub repo: PathBuf,
-    /// Base ref
+    /// Base ref (branch, commit, or tag)
     pub base: String,
-    /// Head ref
+    /// Head ref (branch, commit, or tag)
     pub head: String,
     /// File path (relative to repo root)
     pub file: String,

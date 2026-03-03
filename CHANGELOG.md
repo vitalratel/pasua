@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### CLI
+- `diff --depth=none` — suppress all symbol expansion for a file-level-only overview
+- `log` now outputs full commit SHAs (previously truncated to 7 chars)
+- Symbol lines in Layer 2 output now show line count for symbols ≥ 10 lines
+
+### MCP
+- `summary` action — file-level overview with no symbol expansion
+- Server instructions and tool description now include sigil legend and workflow guide
+
 ## 0.1.0
 
 Initial release.

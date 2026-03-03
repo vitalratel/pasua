@@ -15,10 +15,10 @@ pub struct DiffArgs {
     pub base: String,
     /// Head ref (branch, commit, or tag)
     pub head: String,
-    /// Include Layer 2 symbols for all files (--depth=symbols)
+    /// Symbol expansion: symbols = force all, none = suppress all [default: auto]
     #[arg(long, value_name = "DEPTH")]
     pub depth: Option<String>,
-    /// Line delta threshold for auto-including Layer 2 (default: 200)
+    /// Line delta threshold for auto-expanding a file's symbols
     #[arg(long, default_value = "200")]
     pub threshold: usize,
 }
@@ -26,7 +26,16 @@ pub struct DiffArgs {
 pub async fn run(args: DiffArgs) -> Result<()> {
     let repo = &args.repo;
     let depth_symbols = args.depth.as_deref() == Some("symbols");
-    let result = pipeline::run(repo, &args.base, &args.head, args.threshold, depth_symbols).await?;
+    let expand = args.depth.as_deref() != Some("none");
+    let result = pipeline::run(
+        repo,
+        &args.base,
+        &args.head,
+        args.threshold,
+        depth_symbols,
+        expand,
+    )
+    .await?;
     let repo_label = github::remote_name(repo, &args.base, &args.head)
         .unwrap_or_else(|_| repo.display().to_string());
     let output = render::layer1(&result, &repo_label, &args.base, &args.head);
