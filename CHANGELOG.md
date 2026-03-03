@@ -6,10 +6,16 @@
 - `diff --depth=none` — suppress all symbol expansion for a file-level-only overview
 - `log` now outputs full commit SHAs (previously truncated to 7 chars)
 - Symbol lines in Layer 2 output now show line count for symbols ≥ 10 lines
+- `--threshold` now reads from `PASUA_THRESHOLD` env var and `~/.config/pasua/config.toml` when not explicitly provided
 
 ### MCP
 - `summary` action — file-level overview with no symbol expansion
 - Server instructions and tool description now include sigil legend and workflow guide
+
+### Configuration
+- Global config file at `~/.config/pasua/config.toml` with `[defaults]`, `[lsp]`, and `[lsp.timeouts]` sections
+- Environment variable overrides: `PASUA_THRESHOLD`, `PASUA_LSP_TIMEOUT`, `PASUA_LSP_INDEXING_TIMEOUT`
+- Per-language LSP indexing timeouts via `PASUA_LSP_{LANG}_INDEXING_TIMEOUT` and `[lsp.timeouts]` in config file
 
 ## 0.1.0
 

@@ -142,6 +142,35 @@ pasua
 
 CLI and MCP expose identical operations. Neither wraps the other.
 
+## Configuration
+
+pasua reads `~/.config/pasua/config.toml` on startup. All keys are optional and fall back to built-in defaults.
+
+```toml
+[defaults]
+threshold = 200   # line delta for auto-expanding symbols (default: 200)
+
+[lsp]
+timeout = 30              # per-request LSP timeout in seconds (default: 30)
+indexing_timeout = 30     # wait for LSP initial indexing in seconds (default: 30)
+
+[lsp.timeouts]
+# Per-language indexing timeout overrides (seconds)
+rust = 120
+go = 60
+```
+
+Environment variables override the config file:
+
+| Variable | Description |
+|----------|-------------|
+| `PASUA_THRESHOLD` | Line delta threshold for auto-expansion |
+| `PASUA_LSP_TIMEOUT` | Per-request LSP timeout (seconds) |
+| `PASUA_LSP_INDEXING_TIMEOUT` | LSP indexing wait timeout (seconds) |
+| `PASUA_LSP_RUST_INDEXING_TIMEOUT` | Per-language override (also: GO, PYTHON, TYPESCRIPT, ELIXIR, GLEAM) |
+
+Precedence: CLI flag > environment variable > config file > built-in default.
+
 ## Development
 
 ```bash

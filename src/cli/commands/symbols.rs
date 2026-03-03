@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::core::{pipeline, render};
+use crate::core::{config, pipeline, render};
 
 #[derive(Args, Debug)]
 pub struct SymbolsArgs {
@@ -20,8 +20,9 @@ pub struct SymbolsArgs {
 }
 
 pub async fn run(args: SymbolsArgs) -> Result<()> {
+    let cfg = config::Config::load();
     let diffed =
-        pipeline::symbols_confirmed(&args.repo, &args.base, &args.head, &args.file).await?;
+        pipeline::symbols_confirmed(&args.repo, &args.base, &args.head, &args.file, &cfg).await?;
     let output = render::layer2(&args.file, &diffed);
     print!("{output}");
     Ok(())

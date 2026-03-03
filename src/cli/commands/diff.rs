@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::core::{github, pipeline, render};
+use crate::core::{config, github, pipeline, render};
 
 #[derive(Args, Debug)]
 pub struct DiffArgs {
@@ -18,22 +18,25 @@ pub struct DiffArgs {
     /// Symbol expansion: symbols = force all, none = suppress all [default: auto]
     #[arg(long, value_name = "DEPTH")]
     pub depth: Option<String>,
-    /// Line delta threshold for auto-expanding a file's symbols
-    #[arg(long, default_value = "200")]
-    pub threshold: usize,
+    /// Line delta threshold for auto-expanding a file's symbols [env: PASUA_THRESHOLD]
+    #[arg(long)]
+    pub threshold: Option<usize>,
 }
 
 pub async fn run(args: DiffArgs) -> Result<()> {
     let repo = &args.repo;
+    let cfg = config::Config::load();
+    let threshold = args.threshold.unwrap_or(cfg.threshold);
     let depth_symbols = args.depth.as_deref() == Some("symbols");
     let expand = args.depth.as_deref() != Some("none");
     let result = pipeline::run(
         repo,
         &args.base,
         &args.head,
-        args.threshold,
+        threshold,
         depth_symbols,
         expand,
+        &cfg,
     )
     .await?;
     let repo_label = github::remote_name(repo, &args.base, &args.head)
