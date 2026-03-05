@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+### Fixes
+
+- `serve` no longer panics on startup due to double tracing subscriber initialization
+
 ## 0.1.0
 
 Initial release.
