@@ -8,6 +8,12 @@ pub use commands::{Cli, Commands};
 use anyhow::Result;
 
 pub async fn run(cli: Cli) -> Result<()> {
+    if !matches!(cli.command, Commands::Serve(_)) {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_writer(std::io::stderr)
+            .init();
+    }
     match cli.command {
         Commands::Diff(args) => commands::diff::run(args).await,
         Commands::Symbols(args) => commands::symbols::run(args).await,
